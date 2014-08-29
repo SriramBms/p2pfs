@@ -1,3 +1,10 @@
+/*  Sriram Shantharam
+	sriramsh@buffalo.edu
+	Fall 2014
+	"wow. such code"
+*/
+
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -71,7 +78,7 @@ int getCommandType(char * token){
 
 
 //Function to get the ip given hostname (** PLS IGNORE WEIRD NAMING CONVENTIONS)
-void gethostip(char * hostname){ //from Beej's Newtworking Guide
+void getHostIP(char * hostname){ //from Beej's Newtworking Guide
 	//char dnsServer[] = "8.8.8.8"; //Google DNS server
 	char * dnsServer = "www.google.co.uk"; //Google DNS server
 	char dnsPort[] = "53"; //dns port
@@ -113,8 +120,8 @@ void gethostip(char * hostname){ //from Beej's Newtworking Guide
 
 }
 
-void getmyip(char * buf){
-	char dnsServer[] = "8.8.8.8";
+void getMyIP(char * buf){
+	char dnsServer[] = "8.8.8.8"; //or any valid ip. Get one using getHostIP()
 	int status;
 	int fd;
 	struct sockaddr_in dnsaddr,myaddr;
@@ -256,11 +263,16 @@ int main(int argc, char * argv[]){
 				if(i==STDIN){
 					fgets(command, sizeof (command),stdin);
 					int len = strlen(command) - 1;
+					//fprintf(stderr,"Length=%d",len);
+					if(len==0){
+						continue;
+					}
         			if (command[len] == '\n')
             			command[len] = '\0';
 
             		strToLower(command);
 					//fprintf(stderr,"Input: %s\n",command);
+					
 					strcpy(tokencommand,strtok_r(command," ",&tokenptr));
 					if(strlen(tokencommand)<1){
 						FD_CLR(0,&readfds);
@@ -287,7 +299,7 @@ int main(int argc, char * argv[]){
 
 							break;
 						case MYIP:
-							getmyip(localIP);
+							getMyIP(localIP);
 							fprintf(stderr,"MY IP: %s \n",localIP);
 							break;
 						case MYPORT:
@@ -301,11 +313,11 @@ int main(int argc, char * argv[]){
 						case EXIT:
 							exit(0);
 						default:
-							fprintf(stderr,"Invalid command. Please try again\n");
+							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
 
 					}
 				}
-				fprintf(stderr,">>> ");
+				//fprintf(stderr,">>> ");
 				FD_CLR(0,&readfds);
 			}
 		}
