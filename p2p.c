@@ -25,7 +25,9 @@
 #define EXIT 7
 #define DOWNLOAD 8
 #define CREATOR 9
-#define INVALID 10
+#define UPLOAD 10
+#define STATISTICS 11
+#define INVALID 12
 
 void strToLower(char string[]) {
    
@@ -54,6 +56,10 @@ int getCommandType(char * token){
 	else if(strcmp(token,"terminate")==0)
 		return TERMINATE;
 	else if(strcmp(token,"exit")==0)
+		return EXIT;
+	else if(strcmp(token,"quit")==0)
+		return EXIT;
+	else if(strcmp(token,"q")==0)
 		return EXIT;
 	else if(strcmp(token,"download")==0)
 		return DOWNLOAD;
@@ -107,46 +113,39 @@ void gethostip(char * hostname){ //from Beej's Newtworking Guide
 
 }
 
-void getmyip(){
+void getmyip(char * buf){
 	char dnsServer[] = "8.8.8.8";
-	char dnsPort[] = "53";
 	int status;
-
-
-	struct addrinfo hints;
-	struct addrinfo *results,*p; //p :iterating over the results
-	char ipstr[INET6_ADDRSTRLEN];
+	int fd;
+	struct sockaddr_in dnsaddr,myaddr;
+	int myaddrlen;
+	char ipstr[INET6_ADDRSTRLEN],myip[INET6_ADDRSTRLEN];
 	
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_flags = AI_PASSIVE;
+	if((fd=socket(AF_INET,SOCK_DGRAM,0))<0){
+		fprintf(stderr,"Error while creating socket %d",fd);
+		exit(21);
+	}
 
+	dnsaddr.sin_family = AF_INET;
+	dnsaddr.sin_addr.s_addr = inet_addr(dnsServer);
+	dnsaddr.sin_port = htons(53);
 
-
-	if ((status = getaddrinfo(NULL, "3490", &hints, &results)) != 0) {
-    fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
-    exit(20);
+	if((status=connect(fd, (struct sockaddr *)&dnsaddr, sizeof dnsaddr))<0){
+		fprintf(stderr,"Error while connecting... %d",status);
+		exit(22);
 
 	}
-	
-	for(p=results;p!=NULL;p=p->ai_next){
-		void *addr;
-		char *ipver;
+	myaddrlen = sizeof(myaddr);
+	if((status = getsockname(fd,(struct sockaddr *)&myaddr,&myaddrlen))){
+		fprintf(stderr,"Error while getting local ip %d",status);
+		exit(23);
 
-		if(p->ai_family==AF_INET){
-			struct sockaddr_in * ipv4 = (struct sockaddr_in *)p->ai_addr;
-			addr = &(ipv4->sin_addr);
-			ipver = "IPv4";
-		}else{
-			struct sockaddr_in6 * ipv6 = (struct sockaddr_in6 *)p->ai_addr;
-			addr = &(ipv6->sin6_addr);
-			ipver = "IPv6";
-		}
-		inet_ntop(p->ai_family, addr, ipstr, sizeof ipstr);
-        printf("  %s: %s\n", ipver, ipstr);
 	}
-	freeaddrinfo(results);
+
+	strcpy(buf,inet_ntoa(myaddr.sin_addr));
+	
+	
+
 
 }
 
@@ -169,27 +168,32 @@ int main(int argc, char * argv[]){
 	int nbytes;
 
 	char remoteIP[INET6_ADDRSTRLEN];
-
+	char localIP[INET6_ADDRSTRLEN];
 	int yes = 1;
 	int i,j,rv;
 
 
 
 	struct addrinfo hints, *ai, *p;
-	printf("TEST\n");
+	printf("Initializing...\n");
 	if(argc<3){
 		fprintf(stderr,"Usage %s s/c port\n", argv[0] );
 		exit(1) ;
 	}
 
 	strncpy(mode,argv[1],1);
-	printf("%s\n",mode);
-	printf("%d \n",strncmp(mode,"s",1));
-	printf("%d \n",strncmp(mode,"c",1));
+	//printf("%s\n",mode);
+	//printf("%d \n",strncmp(mode,"s",1));
+	//printf("%d \n",strncmp(mode,"c",1));
 	if(strncmp(mode,"s",1)!=0&&strncmp(mode,"c",1)!=0){
 		fprintf(stderr,"Argument 1 needs to be either s or c, denoting either server or client\n");
 		exit(2);
 	}
+
+	if(strncmp(mode,"s",1)==0)
+		fprintf(stderr,"Running as server\n");
+	else
+		fprintf(stderr,"Running as client\n");
 
 	port = argv[2];
 
@@ -236,19 +240,19 @@ int main(int argc, char * argv[]){
 	FD_SET(listener,&master);
 	fdmax = listener;
 	FD_SET(STDIN,&master);
-
+	fprintf(stderr,">>> ");
 	for(;;){
 		readfds = master;
 		if(select(1,&readfds,NULL,NULL,NULL)==-1){
 			perror("SELECT failed");
 			exit(6);
 		}
-		fprintf(stderr,"Waiting...\n");
+		fprintf(stderr,">>> ");
 		
 		for(i=0;i<fdmax;i++){
-			fprintf(stderr, "checking fd\n");
+			//fprintf(stderr, "checking fd\n");
 			if(FD_ISSET(i,&readfds)){
-				printf("fd set for %d\n",i);
+				//printf("fd set for %d\n",i);
 				if(i==STDIN){
 					fgets(command, sizeof (command),stdin);
 					int len = strlen(command) - 1;
@@ -256,8 +260,12 @@ int main(int argc, char * argv[]){
             			command[len] = '\0';
 
             		strToLower(command);
-					fprintf(stderr,"Input: %s\n",command);
+					//fprintf(stderr,"Input: %s\n",command);
 					strcpy(tokencommand,strtok_r(command," ",&tokenptr));
+					if(strlen(tokencommand)<1){
+						FD_CLR(0,&readfds);
+						continue;
+					}
 					if(tokencommand==NULL ||tokencommand=='\0'){
 						fprintf(stderr,"enterpressed\n\n");
 						FD_CLR(0,&readfds);
@@ -276,53 +284,34 @@ int main(int argc, char * argv[]){
 							fprintf(stderr,"EXIT Close all connections and terminate this process\n\n");
 							fprintf(stderr,"DOWNLOAD <file_name> <file_chunk_size_in_bytes>\n\n");
 							fprintf(stderr,"CREATOR creator of this program\n\n");
+
 							break;
 						case MYIP:
-							getmyip();
+							getmyip(localIP);
+							fprintf(stderr,"MY IP: %s \n",localIP);
 							break;
 						case MYPORT:
-							fprintf(stderr,"Listening on port: %s\n\n",port);
+							fprintf(stderr,"%s\n",port);
 							break;
 						case REGISTER:
 							break;
 						case CREATOR:
 							fprintf(stderr,"(c) 2014 Sriram Shantharam (sriramsh@buffalo.edu)\n\n");
 							break;
+						case EXIT:
+							exit(0);
 						default:
 							fprintf(stderr,"Invalid command. Please try again\n");
 
 					}
 				}
+				fprintf(stderr,">>> ");
 				FD_CLR(0,&readfds);
 			}
 		}
 		
-		/*
-		if(FD_ISSET(STDIN,&readfds)){
-				fprintf(stderr,"fd set for %d",i);
-				
-					fgets(command, sizeof (command),stdin);
-					int len = strlen(command) - 1;
-        			if (command[len] == '\n')
-            			command[len] = '\0';
-					printf("Input: %s",command);
-					FD_CLR(0, &readfds);
-		}
-		*/
+		
 
 	}
-
-
-
-
-	
-
-
-
-	
-
-	
-
-
 	return 0;
 }
