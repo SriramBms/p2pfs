@@ -36,6 +36,8 @@
 #define STATISTICS 11
 #define INVALID 12
 
+
+
 void strToLower(char string[]) {
    
     int i;
@@ -126,7 +128,7 @@ void getMyIP(char * buf){
 	int fd;
 	struct sockaddr_in dnsaddr,myaddr;
 	int myaddrlen;
-	char ipstr[INET6_ADDRSTRLEN],myip[INET6_ADDRSTRLEN];
+	
 	
 	if((fd=socket(AF_INET,SOCK_DGRAM,0))<0){
 		fprintf(stderr,"Error while creating socket %d",fd);
@@ -150,7 +152,7 @@ void getMyIP(char * buf){
 	}
 
 	strcpy(buf,inet_ntoa(myaddr.sin_addr));
-	
+	close(fd);
 	
 
 
@@ -163,13 +165,14 @@ int main(int argc, char * argv[]){
 	char command[100]={0};
 	char tokencommand[10]={0};
 	char * port;
-	char * tokenptr;
+	char * tokenptr,*regptr,*connectptr,*termptr,*dlptr;
 	fd_set master, readfds;
 	int fdmax;
 	int listener;
 	int newfd;
 	struct sockaddr_storage remoteaddr;
 	socklen_t addrlen;
+	int runmode; //0 for server, 1 for client
 
 	char buf[256];
 	int nbytes;
@@ -197,10 +200,13 @@ int main(int argc, char * argv[]){
 		exit(2);
 	}
 
-	if(strncmp(mode,"s",1)==0)
+	if(strncmp(mode,"s",1)==0){
+		runmode=0;
 		fprintf(stderr,"Running as server\n");
-	else
+	}else{
+		runmode=1;
 		fprintf(stderr,"Running as client\n");
+	}
 
 	port = argv[2];
 
@@ -208,18 +214,24 @@ int main(int argc, char * argv[]){
 	FD_ZERO(&readfds);
 
 	memset(&hints,0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
+	
+
 
 	if((rv=getaddrinfo(NULL,port,&hints,&ai)) != 0){
 		fprintf(stderr,"selectserver: %s \n", gai_strerror(rv));
 		exit(3);
 	}
-
-	for(p = ai; p != NULL; p = p->ai_next){  //From Beej's guide to network programming
+	
+	/*
+	for(p = ai; p != NULL; p = p->ai_next){  //From Beej's guide to network programming. Rev1: Useless. Doesn't work.
+		struct sockaddr_in * tempaddr = (struct sockaddr_in *)p->ai_addr;
+		fprintf(stderr,"Inet addr: %s\n",inet_ntoa(tempaddr->sin_addr));
 		listener = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
 		if(listener < 0){
+			fprintf(stderr,"Listener < 0 during socket op\n");
 			continue;
 		}
 
@@ -227,10 +239,48 @@ int main(int argc, char * argv[]){
 
 		if(bind(listener,p->ai_addr,p->ai_addrlen)<0){
 			close(listener);
-			continue;
+			fprintf(stderr,"Error while binding\n");
+			continue; 
 		}
 		break;
 	}
+	*/
+
+	
+
+	listener = socket(AF_INET, SOCK_STREAM, 0);
+	if(listener < 0){
+		fprintf(stderr,"Error while creating socket \n");
+		exit(4);
+	}
+
+	struct sockaddr_in listenAddr;
+	listenAddr.sin_family= AF_INET;
+	getMyIP(localIP);
+
+	inet_aton(localIP,&listenAddr.sin_addr);
+	listenAddr.sin_port=htons(atoi(port));
+
+	if(bind(listener,(struct sockaddr *)&listenAddr,sizeof listenAddr)<0){
+		close(listener);
+		fprintf(stderr,"Error while binding\n");
+		exit(44);
+	}
+
+
+	int retval;
+	socklen_t len = sizeof(retval);
+	if (getsockopt(listener, SOL_SOCKET, SO_ACCEPTCONN, &retval, &len) == -1)
+	    printf("fd %d is not a socket\n", listener);
+	else if (retval)
+	    printf("fd %d is a listening socket. Returned %d\n", listener,retval);
+	else
+	    printf("fd %d is a non-listening socket. Returned %d\n", listener,retval);
+
+	
+
+
+	////////////////////////////////////////////
 
 
 	if(p == NULL){
@@ -239,7 +289,7 @@ int main(int argc, char * argv[]){
 	}
 
 	freeaddrinfo(ai);
-	if (listen(listener, 10) == -1) {
+	if (listen(listener, 10) == -1) {  //Lister to clients if running as a server!
 		perror("listen");
 		exit(5);
 	}
@@ -248,6 +298,12 @@ int main(int argc, char * argv[]){
 	fdmax = listener;
 	FD_SET(STDIN,&master);
 	fprintf(stderr,">>> ");
+
+	/* Format of network commands
+		OP|Param1|Param2|Param3||
+		*/
+
+
 	for(;;){
 		readfds = master;
 		if(select(1,&readfds,NULL,NULL,NULL)==-1){
@@ -300,15 +356,52 @@ int main(int argc, char * argv[]){
 							break;
 						case MYIP:
 							getMyIP(localIP);
-							fprintf(stderr,"MY IP: %s \n",localIP);
+							fprintf(stderr,"IP address:%s \n",localIP);
 							break;
 						case MYPORT:
-							fprintf(stderr,"%s\n",port);
+							fprintf(stderr,"Port number:%s\n",port);
 							break;
 						case REGISTER:
+							if(runmode==0){
+								fprintf(stderr, "Cannot 'Register' on a server\n" );break;}
+							char serverIP[INET6_ADDRSTRLEN];
+							char serverPort[10];
+							strcpy(serverIP,strtok_r(NULL," ",&tokenptr));
+							strcpy(serverPort,strtok_r(NULL," ",&tokenptr));
+							fprintf(stderr,"Connecting to: %s:%s\n",serverIP,serverPort);
+							//R|myip|port to serverIP:serverPort
+							int lStatus;
+							int lFD;
+							struct sockaddr_in servaddr;
+							int myaddrlen;
+							if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
+							fprintf(stderr,"Error while creating socket %d\n",lFD);
+								exit(21);
+							}
+
+							servaddr.sin_family = AF_INET;
+							servaddr.sin_addr.s_addr = inet_addr(serverIP);
+							servaddr.sin_port = htons(atoi(serverPort));
+
+							if((lStatus=connect(lFD, (struct sockaddr *)&servaddr, sizeof servaddr))<0){
+								fprintf(stderr,"Error while connecting... %d\n",lStatus);
+								exit(22);
+
+							}
+							getMyIP(localIP);
+							char regMsg[512];
+							char temp[10];
+
+							snprintf(regMsg, sizeof regMsg, "R|%s|%s||",localIP,port);
+							fprintf(stderr,"%s\n",regMsg);
+
+							int bytesSent = send(lFD,regMsg, strlen(regMsg), 0);
+							fprintf(stderr,"Bytes sent: %d\n",bytesSent);
+
 							break;
 						case CREATOR:
 							fprintf(stderr,"(c) 2014 Sriram Shantharam (sriramsh@buffalo.edu)\n\n");
+							fprintf(stderr,"I have read and understood the course academic integrity policy located at http://www.cse.buffalo.edu/faculty/dimitrio/courses/cse4589_f14/index.html#integrity\n\n");
 							break;
 						case EXIT:
 							exit(0);
@@ -316,9 +409,11 @@ int main(int argc, char * argv[]){
 							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
 
 					}
+				}else if(i==listener){
+					fprintf(stderr,"Received something\n");
 				}
-				//fprintf(stderr,">>> ");
-				FD_CLR(0,&readfds);
+				fprintf(stderr,">>> ");
+				//FD_CLR(0,&readfds);
 			}
 		}
 		
