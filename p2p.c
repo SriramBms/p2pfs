@@ -325,7 +325,7 @@ int main(int argc, char * argv[]){
 
 	for(;;){
 		readfds = master;
-		if(select(fdmax,&readfds,NULL,NULL,NULL)==-1){
+		if(select(fdmax+1,&readfds,NULL,NULL,NULL)==-1){
 			perror("SELECT failed");
 			exit(6);
 		}
