@@ -35,7 +35,9 @@
 #define UPLOAD 10
 #define STATISTICS 11
 #define INVALID 12
-
+#define TRUE 1
+#define FALSE 0
+#define DEBUG TRUE
 
 
 void strToLower(char string[]) {
@@ -248,11 +250,16 @@ int main(int argc, char * argv[]){
 
 	
 
-	listener = socket(AF_INET, SOCK_STREAM, 0);
+	listener = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 	if(listener < 0){
-		fprintf(stderr,"Error while creating socket \n");
+		perror("Error while creating socket \n");
 		exit(4);
 	}
+	if(setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(int))<0){
+		perror("Error while setting socket for reuse\n");
+		exit(5);
+	}
+
 
 	struct sockaddr_in listenAddr;
 	listenAddr.sin_family= AF_INET;
@@ -260,14 +267,41 @@ int main(int argc, char * argv[]){
 
 	inet_aton(localIP,&listenAddr.sin_addr);
 	listenAddr.sin_port=htons(atoi(port));
-
+	/*
 	if(bind(listener,(struct sockaddr *)&listenAddr,sizeof listenAddr)<0){
 		close(listener);
 		fprintf(stderr,"Error while binding\n");
 		exit(44);
+	}*/
+
+	if(bind(listener,ai->ai_addr,ai->ai_addrlen)<0){
+		close(listener);
+		perror("Error while binding\n");
+		exit(44);
 	}
 
 
+	
+
+
+
+
+	////////////////////////////////////////////
+/*
+
+	if(listener == NULL){
+		fprintf(stderr,"selectserver: failed to bind \n");
+		exit(4);
+	}
+*/
+	freeaddrinfo(ai);
+	if (listen(listener, 10) == -1) {  //Lister to clients if running as a server!
+		perror("listen");
+		exit(5);
+	}
+
+	//DEBUG CODE
+	if(DEBUG){
 	int retval;
 	socklen_t len = sizeof(retval);
 	if (getsockopt(listener, SOL_SOCKET, SO_ACCEPTCONN, &retval, &len) == -1)
@@ -277,21 +311,6 @@ int main(int argc, char * argv[]){
 	else
 	    printf("fd %d is a non-listening socket. Returned %d\n", listener,retval);
 
-	
-
-
-	////////////////////////////////////////////
-
-
-	if(p == NULL){
-		fprintf(stderr,"selectserver: failed to bind \n");
-		exit(4);
-	}
-
-	freeaddrinfo(ai);
-	if (listen(listener, 10) == -1) {  //Lister to clients if running as a server!
-		perror("listen");
-		exit(5);
 	}
 
 	FD_SET(listener,&master);
@@ -306,7 +325,7 @@ int main(int argc, char * argv[]){
 
 	for(;;){
 		readfds = master;
-		if(select(1,&readfds,NULL,NULL,NULL)==-1){
+		if(select(fdmax,&readfds,NULL,NULL,NULL)==-1){
 			perror("SELECT failed");
 			exit(6);
 		}
