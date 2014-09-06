@@ -322,19 +322,23 @@ int main(int argc, char * argv[]){
 		OP|Param1|Param2|Param3||
 		*/
 
-
+	int turnswitch = TRUE;
 	for(;;){
+		FD_ZERO(&readfds);
 		readfds = master;
 		if(select(fdmax+1,&readfds,NULL,NULL,NULL)==-1){
 			perror("SELECT failed");
 			exit(6);
 		}
-		fprintf(stderr,">>> ");
-		
+		//fprintf(stderr,">>> \n");
+		if(turnswitch){
+			turnswitch = FALSE;
+			fprintf(stderr,"select triggered\n");
+		}
 		for(i=0;i<fdmax;i++){
 			//fprintf(stderr, "checking fd\n");
 			if(FD_ISSET(i,&readfds)){
-				//printf("fd set for %d\n",i);
+				printf("fd set for %d\n",i);
 				if(i==STDIN){
 					fgets(command, sizeof (command),stdin);
 					int len = strlen(command) - 1;
@@ -358,6 +362,7 @@ int main(int argc, char * argv[]){
 						FD_CLR(0,&readfds);
 						continue;
 					}
+					//FD_CLR(0,&readfds);
 					int commandtype = getCommandType(tokencommand);
 					switch (commandtype){
 						case HELP:
@@ -427,9 +432,15 @@ int main(int argc, char * argv[]){
 						default:
 							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
 
+
 					}
 				}else if(i==listener){
 					fprintf(stderr,"Received something\n");
+					break;
+					//FD_CLR(listener,&readfds);
+				}else{
+					fprintf(stderr,"Unknown fd \n");
+					break;
 				}
 				fprintf(stderr,">>> ");
 				//FD_CLR(0,&readfds);
