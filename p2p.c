@@ -336,7 +336,7 @@ int main(int argc, char * argv[]){
 			fprintf(stderr,"select triggered\n");
 		}
 		for(i=0;i<fdmax;i++){
-			//fprintf(stderr, "checking fd\n");
+			fprintf(stderr, "checking fd %d\n",i);
 			if(FD_ISSET(i,&readfds)){
 				printf("fd set for %d\n",i);
 				if(i==STDIN){
