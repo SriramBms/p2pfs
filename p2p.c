@@ -35,10 +35,39 @@
 #define UPLOAD 10
 #define STATISTICS 11
 #define INVALID 12
+#define UPDATELIST 13 //update list
+#define DEREGISTER 14
+
+#define TERM "***"
 #define TRUE 1
 #define FALSE 0
 #define DEBUG TRUE
+#define HOST_NAME_MAX 100
 
+
+struct networkentity{
+	char token[6];
+	int id;
+	char hostname[HOST_NAME_MAX];
+	char ip[INET6_ADDRSTRLEN];
+	int port;
+
+};
+//globals
+struct networkentity peerlist[5]={0};
+char localIP[INET6_ADDRSTRLEN];
+char hostname[HOST_NAME_MAX+1];
+char port[5];
+char * tokenptr,*regptr,*connectptr,*termptr,*dlptr,*recvptr;
+
+//function declaration;
+void listpeers();
+void addToList(char *, char *, char*);
+void zprintf(char *);
+void sendlistbroadcast();
+void deregisterClient();
+int getIDByHostname();
+void sendMessage(char *, int, void *);
 
 void strToLower(char string[]) {
    
@@ -76,10 +105,21 @@ int getCommandType(char * token){
 		return DOWNLOAD;
 	else if(strcmp(token,"creator")==0)
 		return CREATOR;
+	else if(strcmp(token,"r")==0)
+		return REGISTER;
+	else if(strcmp(token,"ul")==0)
+		return UPDATELIST;
+	else if(strcmp(token,"d")==0)
+		return DEREGISTER;
 	else
 		return INVALID;
 }
 
+void zprintf(char * msg){
+	if(DEBUG){
+		fprintf(stderr, "%s\n", msg);
+	}
+}
 
 //Function to get the ip given hostname (** PLS IGNORE WEIRD NAMING CONVENTIONS)
 void getHostIP(char * hostname){ //from Beej's Newtworking Guide
@@ -160,14 +200,166 @@ void getMyIP(char * buf){
 
 }
 
+void registerClient(char * message){
+	zprintf("In register client\n");
+	char i_hostname[HOST_NAME_MAX],i_clientIP[INET6_ADDRSTRLEN],i_clientPort[5];
+	strcpy(i_hostname,strtok_r(NULL,"|",&regptr));
+	strcpy(i_clientIP,strtok_r(NULL,"|",&regptr));
+	strcpy(i_clientPort,strtok_r(NULL,"|",&regptr));
 
+	addToList(i_hostname,i_clientIP,i_clientPort);
+
+
+}
+
+void deregisterClient(){
+	char message[1024];
+	int hostid = getIDByHostname();
+	snprintf(message, sizeof message, "D|%d|",hostid);
+	sendMessage(peerlist[1].ip,peerlist[1].port,message);
+}
+
+int getIDByHostname(){
+	int i;
+
+	for(i=0;i<5;i++){
+		if(strcmp(peerlist[i].hostname,hostname)==0)
+			return peerlist[i].id;
+	}
+}
+
+void addToList(char * i_hostname, char * i_clientIP, char * i_clientPort){
+	zprintf("In addToList \n");
+	int i = 0;
+	
+	while(peerlist[i].id!=0){
+		if((strcmp(i_hostname,peerlist[i].hostname)+strcmp(i_clientIP,peerlist[i].ip)+(atoi(i_clientPort)-peerlist[i].port))==0){
+			//fprintf(stderr,"Client already registered. \n");
+			zprintf("Client already registered. \n");
+			return;
+		}
+
+		i++;
+		if(i==5){
+			fprintf(stderr,"Maximum number of connected peers (5) reached. You can't add more \n");
+			break;
+		}
+	}
+	strcpy(peerlist[i].token,"LIST|");
+
+	peerlist[i].id=i+1;
+	strcpy(peerlist[i].hostname,i_hostname);
+	strcpy(peerlist[i].ip,i_clientIP);
+	peerlist[i].port=atoi(i_clientPort);
+	//listpeers();
+	sendlistbroadcast();
+}
+
+void sendMessage(char * i_ip, int i_port, void * i_message){ //messages less than 1024 bytes 
+	int i;
+	
+	int lStatus;
+	int lFD;
+	struct sockaddr_in servaddr;
+	int myaddrlen;
+	char regMsg[512];
+	char temp[10];
+	
+		if(DEBUG){
+			fprintf(stderr,"Connecting to: %s\n",peerlist[i].hostname);
+		}
+
+		if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
+			fprintf(stderr,"Error while creating socket %d\n",lFD);
+			exit(21);
+		}
+		servaddr.sin_family = AF_INET;
+		servaddr.sin_addr.s_addr = inet_addr(i_ip);
+		servaddr.sin_port = htons(i_port);
+
+		if((lStatus=connect(lFD, (struct sockaddr *)&servaddr, sizeof servaddr))<0){
+			fprintf(stderr,"Error while connecting... %d\n",lStatus);
+			exit(22);
+
+		}
+		int bytesSent = send(lFD,i_message, sizeof i_message, 0);
+		if(DEBUG)
+			fprintf(stderr,"Bytes sent: %d\n",bytesSent);
+
+		close(lFD);
+
+	
+}
+
+void sendlistbroadcast(){
+	int i;
+	char serverIP[INET6_ADDRSTRLEN];
+	char serverPort[10];
+	int lStatus;
+	int lFD;
+	struct sockaddr_in servaddr;
+	int myaddrlen;
+	char regMsg[512];
+	char temp[10];
+	for (i =0;i<4 && peerlist[i].id!=0;i++){
+		if(DEBUG){
+			fprintf(stderr,"Connecting to: %s\n",peerlist[i].hostname);
+		}
+
+		if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
+			fprintf(stderr,"Error while creating socket %d\n",lFD);
+			exit(21);
+		}
+		servaddr.sin_family = AF_INET;
+		servaddr.sin_addr.s_addr = inet_addr(peerlist[i].ip);
+		servaddr.sin_port = htons(peerlist[i].port);
+
+		if((lStatus=connect(lFD, (struct sockaddr *)&servaddr, sizeof servaddr))<0){
+			fprintf(stderr,"Error while connecting... %d\n",lStatus);
+			exit(22);
+
+		}
+		int bytesSent = send(lFD,peerlist, sizeof peerlist, 0);
+		if(DEBUG)
+			fprintf(stderr,"Bytes sent: %d\n",bytesSent);
+
+		close(lFD);
+
+	}
+
+}
+
+void listpeers(){
+	zprintf("In listpeers \n");
+	int i = 0;
+	while(peerlist[i].id!=0 && i <5){
+		printf("%5d%35s%20s%8d\n", peerlist[i].id, peerlist[i].hostname, peerlist[i].ip, peerlist[i].port); 
+		i++;
+	}
+}
+
+
+
+void init(){
+	zprintf("In init() \n");
+	//get the IP
+	getMyIP(localIP);
+	//get the hostname
+	if(gethostname(hostname, sizeof (hostname)-1)!=0){
+		perror("Error while retrieving hostname");
+		exit(23);
+	}
+	addToList(hostname,localIP,port);
+
+
+}
 
 int main(int argc, char * argv[]){
 	char mode[1];
 	char command[100]={0};
 	char tokencommand[10]={0};
-	char * port;
-	char * tokenptr,*regptr,*connectptr,*termptr,*dlptr;
+	
+	
 	fd_set master, readfds;
 	int fdmax;
 	int listener;
@@ -180,11 +372,11 @@ int main(int argc, char * argv[]){
 	int nbytes;
 
 	char remoteIP[INET6_ADDRSTRLEN];
-	char localIP[INET6_ADDRSTRLEN];
+
 	int yes = 1;
 	int i,j,rv;
 
-
+	
 
 	struct addrinfo hints, *ai, *p;
 	printf("Initializing...\n");
@@ -209,8 +401,11 @@ int main(int argc, char * argv[]){
 		runmode=1;
 		fprintf(stderr,"Running as client\n");
 	}
+	
+	strcpy(port,argv[2]);
 
-	port = argv[2];
+	
+
 
 	FD_ZERO(&master);
 	FD_ZERO(&readfds);
@@ -313,6 +508,27 @@ int main(int argc, char * argv[]){
 
 	}
 
+
+	init(); //bug fix: Init() should be after the client/server has started listening to incoming requests. 
+
+
+	if(DEBUG){
+		fprintf(stderr, "struct size = %ld\n", sizeof peerlist);
+		struct networkentity templist[5]={0};
+		memcpy(templist,peerlist,sizeof peerlist);
+		fprintf(stderr, "struct size = %ld\n", sizeof templist);
+		int i = 0;
+		char temptok[5];
+		strcpy(temptok,strtok((char *)templist,"|"));
+		fprintf(stderr, "%s\n", temptok);
+		while(templist[i].id!=0 && i <5){
+			fprintf(stderr, "printing %d \n",i);
+			fprintf(stderr, "%5d%35s%20s%8d\n", templist[i].id, templist[i].hostname, templist[i].ip, templist[i].port); 
+			i++;
+		}
+		
+	}
+
 	FD_SET(listener,&master);
 	fdmax = listener;
 	FD_SET(STDIN,&master);
@@ -330,16 +546,14 @@ int main(int argc, char * argv[]){
 			perror("SELECT failed");
 			exit(6);
 		}
-		//fprintf(stderr,">>> \n");
-		if(turnswitch){
-			turnswitch = FALSE;
-			fprintf(stderr,"select triggered\n");
-		}
+		fprintf(stderr,">>> ");
+		
 		for(i=0;i<=fdmax;i++){
-			fprintf(stderr, "checking fd %d\n",i);
+			//fprintf(stderr, "checking fd %d\n",i);
 			if(FD_ISSET(i,&readfds)){
-				printf("fd set for %d\n",i);
+				//printf("fd set for %d\n",i);
 				if(i==STDIN){
+					FD_CLR(0,&readfds);
 					fgets(command, sizeof (command),stdin);
 					int len = strlen(command) - 1;
 					//fprintf(stderr,"Length=%d",len);
@@ -358,11 +572,11 @@ int main(int argc, char * argv[]){
 						continue;
 					}
 					if(tokencommand==NULL ||tokencommand=='\0'){
-						fprintf(stderr,"enterpressed\n\n");
+						//fprintf(stderr,"enterpressed\n\n");
 						FD_CLR(0,&readfds);
 						continue;
 					}
-					//FD_CLR(0,&readfds);
+					
 					int commandtype = getCommandType(tokencommand);
 					switch (commandtype){
 						case HELP:
@@ -379,7 +593,7 @@ int main(int argc, char * argv[]){
 
 							break;
 						case MYIP:
-							getMyIP(localIP);
+							//getMyIP(localIP);
 							fprintf(stderr,"IP address:%s \n",localIP);
 							break;
 						case MYPORT:
@@ -412,11 +626,13 @@ int main(int argc, char * argv[]){
 								exit(22);
 
 							}
-							getMyIP(localIP);
+							//getMyIP(localIP);
+
+
 							char regMsg[512];
 							char temp[10];
-
-							snprintf(regMsg, sizeof regMsg, "R|%s|%s||",localIP,port);
+							
+							snprintf(regMsg, sizeof regMsg, "R|%s|%s|%s|%s|",hostname,localIP,port,TERM);
 							fprintf(stderr,"%s\n",regMsg);
 
 							int bytesSent = send(lFD,regMsg, strlen(regMsg), 0);
@@ -428,19 +644,60 @@ int main(int argc, char * argv[]){
 							fprintf(stderr,"I have read and understood the course academic integrity policy located at http://www.cse.buffalo.edu/faculty/dimitrio/courses/cse4589_f14/index.html#integrity\n\n");
 							break;
 						case EXIT:
+							deregisterClient();
 							exit(0);
+						case LIST:
+							listpeers();
+							break;
 						default:
 							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
 
 
 					}
-				}else if(i==listener){
+				}
+				if(i==listener){
+					FD_CLR(listener,&readfds);
 					fprintf(stderr,"Received something\n");
-					break;
-					//FD_CLR(listener,&readfds);
-				}else{
-					fprintf(stderr,"Unknown fd \n");
-					break;
+					struct sockaddr_in newclientmsg;
+					int newclientmsgsize;
+					int newfd = accept(listener,(struct sockaddr *)&newclientmsg, &newclientmsgsize);
+					char newMessage[1024];
+					int numbytes;
+					if((numbytes = recv(newfd, newMessage, sizeof newMessage, 0))<=0){
+						perror("ERROR ON RECV \n");
+						exit (24);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+					}
+					if(DEBUG)
+					fprintf(stderr,"Received message=%s\n",newMessage);
+					char recvtype[2]={0};
+					strcpy(recvtype,strtok_r(newMessage,"|",&regptr));
+					if(DEBUG)
+					fprintf(stderr,"%s\n",recvtype);
+
+					int recvcode = getCommandType(recvtype);
+					if(DEBUG)
+						fprintf(stderr,"recvcode = %d",recvcode);
+					
+					switch (recvcode){
+						case REGISTER: 
+							zprintf("client registering...\n");
+							registerClient(newMessage);
+							break;
+						case LIST:
+							zprintf("update list");
+							memcpy(peerlist,newMessage,sizeof peerlist);
+							listpeers();
+							break;
+						case DEREGISTER:
+							zprintf("A client deregistered");
+							break;
+
+
+
+
+
+
+					}
 				}
 				fprintf(stderr,">>> ");
 				//FD_CLR(0,&readfds);
