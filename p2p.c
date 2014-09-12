@@ -42,7 +42,8 @@
 #define TRUE 1
 #define FALSE 0
 #define DEBUG TRUE
-#define HOST_NAME_MAX 100
+#define HOST_NAME_MAX 128
+#define MAX_LIST_ENTRIES 5
 
 
 struct networkentity{
@@ -54,13 +55,14 @@ struct networkentity{
 
 };
 //globals
-struct networkentity peerlist[5]={0};
+struct networkentity peerlist[MAX_LIST_ENTRIES]={0};
 char localIP[INET6_ADDRSTRLEN];
 char hostname[HOST_NAME_MAX+1];
 char port[5];
 char * tokenptr,*regptr,*connectptr,*termptr,*dlptr,*recvptr;
+int active;
 
-//function declaration;
+//function declarations;
 void listpeers();
 void addToList(char *, char *, char*);
 void zprintf(char *);
@@ -68,7 +70,12 @@ void sendlistbroadcast();
 void deregisterClient();
 int getIDByHostname();
 void sendMessage(char *, int, void *);
+void removeClientFromList();
+int isValidID(int);
 
+
+
+//---------------------------------//
 void strToLower(char string[]) {
    
     int i;
@@ -197,10 +204,18 @@ void getMyIP(char * buf){
 	close(fd);
 	
 
-
 }
 
-void registerClient(char * message){
+int isValidID(int i_id){
+	int i;
+	for(i=0;i<MAX_LIST_ENTRIES;i++){
+		if(peerlist[i].id==i_id)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+void registerClient(){
 	zprintf("In register client\n");
 	char i_hostname[HOST_NAME_MAX],i_clientIP[INET6_ADDRSTRLEN],i_clientPort[5];
 	strcpy(i_hostname,strtok_r(NULL,"|",&regptr));
@@ -212,18 +227,72 @@ void registerClient(char * message){
 
 }
 
-void deregisterClient(){
+void deregisterClient(int connID){
 	char message[1024];
-	int hostid = getIDByHostname();
+	int hostid;
+
+
+	
+	if(connID==0)
+		hostid = getIDByHostname();
+	else
+		hostid = connID;
+
+	if(!isValidID(hostid)){
+		fprintf(stderr,"Invalid connection ID or client might have already deregistered\n");
+		return;
+	}
+		
 	snprintf(message, sizeof message, "D|%d|",hostid);
-	sendMessage(peerlist[1].ip,peerlist[1].port,message);
+	zprintf(message);
+	sendMessage(peerlist[0].ip,peerlist[0].port,message);
 }
+
+
+void removeClientFromList(){
+	int i=0;
+	int id = atoi(strtok_r(NULL,"|",&regptr));
+
+	if(!isValidID(id)){
+		fprintf(stderr,"Invalid connection ID or client might have already deregistered\n");
+		return;
+	}
+
+	if(DEBUG) fprintf(stderr, "ID to remove: %d\n", id);
+
+	while(peerlist[i].id != id) 
+		i++;
+
+	if(i==MAX_LIST_ENTRIES-1){
+		peerlist[MAX_LIST_ENTRIES-1].id = 0;
+		sendlistbroadcast();
+		return;
+	}
+
+	int j = i+1;
+	while(j<MAX_LIST_ENTRIES){
+		if(peerlist[j].id==0)
+			break;
+		peerlist[j-1]= peerlist[j];
+		peerlist[j-1].id=j;
+		j++;
+
+	}
+
+	peerlist[j-1].id = 0;
+	sendlistbroadcast();
+
+}
+
+
+	
+
 
 int getIDByHostname(){
 	int i;
 
-	for(i=0;i<5;i++){
-		if(strcmp(peerlist[i].hostname,hostname)==0)
+	for(i=0;i<MAX_LIST_ENTRIES && peerlist[i].id != 0;i++){
+		if((strcmp(hostname,peerlist[i].hostname)+strcmp(localIP,peerlist[i].ip)+(atoi(port)-peerlist[i].port))==0)
 			return peerlist[i].id;
 	}
 }
@@ -240,8 +309,8 @@ void addToList(char * i_hostname, char * i_clientIP, char * i_clientPort){
 		}
 
 		i++;
-		if(i==5){
-			fprintf(stderr,"Maximum number of connected peers (5) reached. You can't add more \n");
+		if(i==MAX_LIST_ENTRIES){
+			fprintf(stderr,"Maximum number of clients (%d) reached. You can't add more \n",MAX_LIST_ENTRIES);
 			break;
 		}
 	}
@@ -256,8 +325,7 @@ void addToList(char * i_hostname, char * i_clientIP, char * i_clientPort){
 }
 
 void sendMessage(char * i_ip, int i_port, void * i_message){ //messages less than 1024 bytes 
-	int i;
-	
+		
 	int lStatus;
 	int lFD;
 	struct sockaddr_in servaddr;
@@ -266,7 +334,7 @@ void sendMessage(char * i_ip, int i_port, void * i_message){ //messages less tha
 	char temp[10];
 	
 		if(DEBUG){
-			fprintf(stderr,"Connecting to: %s\n",peerlist[i].hostname);
+			fprintf(stderr,"Connecting to: %s\n",i_ip);
 		}
 
 		if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
@@ -303,7 +371,7 @@ void sendlistbroadcast(){
 	char temp[10];
 	for (i =0;i<4 && peerlist[i].id!=0;i++){
 		if(DEBUG){
-			fprintf(stderr,"Connecting to: %s\n",peerlist[i].hostname);
+			fprintf(stderr,"Connecting to: %s %d\n",peerlist[i].hostname,peerlist[i].port);
 		}
 
 		if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
@@ -332,7 +400,7 @@ void sendlistbroadcast(){
 void listpeers(){
 	zprintf("In listpeers \n");
 	int i = 0;
-	while(peerlist[i].id!=0 && i <5){
+	while(peerlist[i].id!=0 && i <MAX_LIST_ENTRIES){
 		printf("%5d%35s%20s%8d\n", peerlist[i].id, peerlist[i].hostname, peerlist[i].ip, peerlist[i].port); 
 		i++;
 	}
@@ -350,6 +418,7 @@ void init(){
 		exit(23);
 	}
 	addToList(hostname,localIP,port);
+	active = 0;
 
 
 }
@@ -514,14 +583,14 @@ int main(int argc, char * argv[]){
 
 	if(DEBUG){
 		fprintf(stderr, "struct size = %ld\n", sizeof peerlist);
-		struct networkentity templist[5]={0};
+		struct networkentity templist[MAX_LIST_ENTRIES]={0};
 		memcpy(templist,peerlist,sizeof peerlist);
 		fprintf(stderr, "struct size = %ld\n", sizeof templist);
 		int i = 0;
 		char temptok[5];
 		strcpy(temptok,strtok((char *)templist,"|"));
 		fprintf(stderr, "%s\n", temptok);
-		while(templist[i].id!=0 && i <5){
+		while(templist[i].id!=0 && i <MAX_LIST_ENTRIES){
 			fprintf(stderr, "printing %d \n",i);
 			fprintf(stderr, "%5d%35s%20s%8d\n", templist[i].id, templist[i].hostname, templist[i].ip, templist[i].port); 
 			i++;
@@ -637,17 +706,29 @@ int main(int argc, char * argv[]){
 
 							int bytesSent = send(lFD,regMsg, strlen(regMsg), 0);
 							fprintf(stderr,"Bytes sent: %d\n",bytesSent);
-
+							if(bytesSent!=strlen(regMsg)){
+								fprintf(stderr,"Erro while registering \n");
+								exit (31);
+							}
+							active = 1;
 							break;
 						case CREATOR:
 							fprintf(stderr,"(c) 2014 Sriram Shantharam (sriramsh@buffalo.edu)\n\n");
 							fprintf(stderr,"I have read and understood the course academic integrity policy located at http://www.cse.buffalo.edu/faculty/dimitrio/courses/cse4589_f14/index.html#integrity\n\n");
 							break;
 						case EXIT:
-							deregisterClient();
+							deregisterClient(0);
 							exit(0);
 						case LIST:
 							listpeers();
+							break;
+						case TERMINATE:
+							zprintf("Terminating a client");
+							char termID[1];
+							strcpy(termID,strtok_r(NULL," ",&tokenptr));
+							fprintf(stderr, "term ID= %d\n", atoi(termID));
+
+							deregisterClient(atoi(termID));
 							break;
 						default:
 							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
@@ -681,7 +762,7 @@ int main(int argc, char * argv[]){
 					switch (recvcode){
 						case REGISTER: 
 							zprintf("client registering...\n");
-							registerClient(newMessage);
+							registerClient();
 							break;
 						case LIST:
 							zprintf("update list");
@@ -690,6 +771,7 @@ int main(int argc, char * argv[]){
 							break;
 						case DEREGISTER:
 							zprintf("A client deregistered");
+							removeClientFromList();
 							break;
 
 
