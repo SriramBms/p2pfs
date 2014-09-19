@@ -17,11 +17,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#define STDIN 0
+
+
 
 
 // Define command types
-
+#define STDIN 0
 #define HELP 0
 #define MYIP 1
 #define MYPORT 2
@@ -37,6 +38,8 @@
 #define INVALID 12
 #define UPDATELIST 13 //update list
 #define DEREGISTER 14
+#define HOSTNAME 15
+#define NOOP 16
 
 #define TERM "***"
 #define TRUE 1
@@ -44,7 +47,9 @@
 #define DEBUG TRUE
 #define HOST_NAME_MAX 128
 #define MAX_LIST_ENTRIES 5
+#define MAX_PEER_ENTRIES 3
 
+char * noop = "Z|***|";
 
 struct networkentity{
 	char token[6];
@@ -54,13 +59,26 @@ struct networkentity{
 	int port;
 
 };
+
+struct connectionparams{
+	char ip[INET6_ADDRSTRLEN];
+	int fd;
+	char filename[HOST_NAME_MAX]; //assume the file name is not longer than host name length/ same constraints
+	int isactive;
+};
 //globals
 struct networkentity peerlist[MAX_LIST_ENTRIES]={0};
+struct connectionparams activeConn[MAX_PEER_ENTRIES]={0};
+struct connectionparams waitlist[MAX_PEER_ENTRIES]={0};
+
+
 char localIP[INET6_ADDRSTRLEN];
 char hostname[HOST_NAME_MAX+1];
 char port[5];
 char * tokenptr,*regptr,*connectptr,*termptr,*dlptr,*recvptr;
 int active;
+//int activeConn[4]={-1};
+int numPeers;
 
 //function declarations;
 void listpeers();
@@ -70,8 +88,13 @@ void sendlistbroadcast();
 void deregisterClient();
 int getIDByHostname();
 void sendMessage(char *, int, void *);
-void removeClientFromList();
+void removeClientFromList(int);
 int isValidID(int);
+int connectTo(char *, int);
+void closeAllFds();
+int addToPeerFdList(char * , int);
+int removeFromPeerFdList(int);
+int isConnectedToIp(char * );
 
 
 
@@ -118,6 +141,18 @@ int getCommandType(char * token){
 		return UPDATELIST;
 	else if(strcmp(token,"d")==0)
 		return DEREGISTER;
+	else if(strcmp(token,"hostname")==0)
+		return HOSTNAME;
+	else if(strcmp(token,"upload")==0)
+		return UPLOAD;
+	else if(strcmp(token,"statistics")==0)
+		return STATISTICS;
+	else if(strcmp(token,"stats")==0)
+		return STATISTICS;
+	else if(strcmp(token,"term")==0)
+		return TERMINATE;
+	else if(strcmp(token,"z")==0)
+		return NOOP;
 	else
 		return INVALID;
 }
@@ -170,6 +205,48 @@ void getHostIP(char * hostname){ //from Beej's Newtworking Guide
 	freeaddrinfo(results);
 
 }
+/**
+*
+**/
+
+void reinitializeList(){
+	int i;
+	for(i=0;i<MAX_LIST_ENTRIES;i++){
+		peerlist[i].id=0;
+		
+		peerlist[i].port=0;
+		
+	}
+}
+
+void getIpFromHost(char * i_hostname, char * i_ipaddr){
+	//from beej's guide
+	
+	    struct hostent *he;
+	    struct in_addr **addr_list;
+	    int i;
+	         
+	    if ( (he = gethostbyname( i_hostname ) ) == NULL) 
+	    {
+	        // get the host info
+	        perror("gethostbyname: Something went wrong. \n");
+	        return;
+	    }
+	 
+	    addr_list = (struct in_addr **) he->h_addr_list;
+	     
+	    for(i = 0; addr_list[i] != NULL; i++) 
+	    {
+	        //Return the first one;
+	        strcpy(i_ipaddr , inet_ntoa(*addr_list[i]) );
+	        return;
+	    }
+	     
+	    return;
+
+
+}
+
 
 void getMyIP(char * buf){
 	char dnsServer[] = "8.8.8.8"; //or any valid ip. Get one using getHostIP()
@@ -187,6 +264,8 @@ void getMyIP(char * buf){
 	dnsaddr.sin_family = AF_INET;
 	dnsaddr.sin_addr.s_addr = inet_addr(dnsServer);
 	dnsaddr.sin_port = htons(53);
+
+	
 
 	if((status=connect(fd, (struct sockaddr *)&dnsaddr, sizeof dnsaddr))<0){
 		fprintf(stderr,"Error while connecting... %d",status);
@@ -215,6 +294,17 @@ int isValidID(int i_id){
 	return FALSE;
 }
 
+int isClientActive(char * c_ip){
+	int i;
+	for(i =0; i < MAX_LIST_ENTRIES && peerlist[i].id!=0; i++){
+		if(strcmp(c_ip,peerlist[i].ip)==0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+
+
 void registerClient(){
 	zprintf("In register client\n");
 	char i_hostname[HOST_NAME_MAX],i_clientIP[INET6_ADDRSTRLEN],i_clientPort[5];
@@ -242,16 +332,212 @@ void deregisterClient(int connID){
 		fprintf(stderr,"Invalid connection ID or client might have already deregistered\n");
 		return;
 	}
-		
+	
+	closeAllFds();
+
 	snprintf(message, sizeof message, "D|%d|",hostid);
 	zprintf(message);
 	sendMessage(peerlist[0].ip,peerlist[0].port,message);
 }
 
+/*
+void terminateClient(int connID){
+	char message[1024];
+	int hostid;
 
-void removeClientFromList(){
+
+	
+	if(connID==0)
+		hostid = getIDByHostname();
+	else
+		hostid = connID;
+
+	if(!isValidID(hostid)){
+		fprintf(stderr,"Invalid connection ID or client might have already deregistered\n");
+		return;
+	}
+		
+	snprintf(message, sizeof message, "D|%d|",hostid);
+	zprintf(message);
+	sendMessage(peerlist[0].ip,peerlist[0].port,message);
+}
+*/
+
+int addToPeerFdList(char * i_ip, int i_fd){
+	int i;
+	if(numPeers==MAX_PEER_ENTRIES)
+		return FALSE;
+
+	if(isConnectedToIp(i_ip))
+		return TRUE;
+
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(activeConn[i].fd==0){
+			strcpy(activeConn[i].ip,i_ip);
+			activeConn[i].fd=i_fd;
+			activeConn[i].isactive=FALSE;
+			numPeers++;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+int removeFromPeerFdList(int fd){
+	int i;
+	if(numPeers==0)
+		return TRUE;
+
+	
+
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(activeConn[i].fd==fd){
+			activeConn[i].fd==0;
+			numPeers--;
+			activeConn[i].isactive=FALSE;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+int isConnectedToIp(char * i_ip){
+	int i;
+	if(numPeers==0)
+		return FALSE;
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(strcmp(i_ip,activeConn[i].ip)==0){
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+void closeAllFds(){
+	int i;
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(activeConn[i].fd!=0){
+			close(activeConn[i].fd);
+			activeConn[i].fd=0;
+			numPeers--;
+		}
+	}
+}
+
+int addToWaitList(char * i_ip, int i_fd){
+	int i;
+	if(numPeers==MAX_PEER_ENTRIES)
+		return FALSE;
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(waitlist[i].fd==0){
+			strcpy(waitlist[i].ip,i_ip);
+			waitlist[i].fd=i_fd;
+			
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+
+int removeFromWaitList(int fd){
+	int i;
+	if(numPeers==0)
+		return TRUE;
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(waitlist[i].fd==fd){
+			waitlist[i].fd==0;
+			
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+int isWaiting(int fd){
+	int i;
+	
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(fd == waitlist[i].fd){
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+int connectTo(char * c_ip, int c_port){
+	int lStatus=-1;
+	int lFD;
+	struct sockaddr_in servaddr;
+	int myaddrlen;
+	char regMsg[512];
+	char temp[10];
+	
+	if(numPeers==MAX_PEER_ENTRIES){
+		fprintf(stderr, "Maximum of connected peers reached! \n");
+		return FALSE;
+	}
+
+	int i;
+
+	for(i=1;i<MAX_LIST_ENTRIES && peerlist[i].id!=0;i++){
+		if(strcmp(peerlist[i].ip,c_ip)==0){
+			lStatus = 0;
+			servaddr.sin_addr.s_addr = inet_addr(c_ip);
+			break;
+		}
+			
+
+		if(strcmp(peerlist[i].hostname, c_ip)==0){
+			lStatus = 0;
+			servaddr.sin_addr.s_addr = inet_addr(peerlist[i].ip);
+			break;
+		}
+	}
+
+	if(lStatus==-1){
+		fprintf(stderr, "Client with the entered IP address ( %s ) is not registered with the server\n", c_ip);
+		return FALSE;
+	}
+
+	if(DEBUG){
+		fprintf(stderr,"Connecting to: %s\n",c_ip);
+	}
+
+	if((lFD=socket(AF_INET,SOCK_STREAM,0))<0){
+		fprintf(stderr,"Error while creating socket %d\n",lFD);
+		exit(21);
+	}
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_port = htons(c_port);
+
+	if((lStatus=connect(lFD, (struct sockaddr *)&servaddr, sizeof servaddr))<0){
+		fprintf(stderr,"Error while connecting... %d\n",lStatus);
+		exit(22);
+
+	}
+
+	//char * noop = "Z|***|";
+
+	int res = addToPeerFdList(c_ip,lFD);
+
+
+	if(res==FALSE){
+		fprintf(stderr, "Max number of connected peers reached!\n");
+		close(lFD);
+		return FALSE;
+	}
+	int bytesSent = send(lFD,noop, sizeof noop, 0);
+	if(DEBUG)
+		fprintf(stderr,"Bytes sent: %d\n",bytesSent);
+
+		
+}
+
+
+void removeClientFromList(int id){
 	int i=0;
-	int id = atoi(strtok_r(NULL,"|",&regptr));
+	
 
 	if(!isValidID(id)){
 		fprintf(stderr,"Invalid connection ID or client might have already deregistered\n");
@@ -260,8 +546,13 @@ void removeClientFromList(){
 
 	if(DEBUG) fprintf(stderr, "ID to remove: %d\n", id);
 
-	while(peerlist[i].id != id) 
+	char * termmsg = "TERM|***|";
+
+
+	while(peerlist[i].id != id) //index to be removed can also be just (id-1)
 		i++;
+
+	sendMessage(peerlist[i].ip,peerlist[i].port,termmsg);
 
 	if(i==MAX_LIST_ENTRIES-1){
 		peerlist[MAX_LIST_ENTRIES-1].id = 0;
@@ -358,6 +649,8 @@ void sendMessage(char * i_ip, int i_port, void * i_message){ //messages less tha
 
 	
 }
+
+
 
 void sendlistbroadcast(){
 	int i;
@@ -620,7 +913,8 @@ int main(int argc, char * argv[]){
 		for(i=0;i<=fdmax;i++){
 			//fprintf(stderr, "checking fd %d\n",i);
 			if(FD_ISSET(i,&readfds)){
-				//printf("fd set for %d\n",i);
+				if(DEBUG)
+					printf("fd set for %d\n",i);
 				if(i==STDIN){
 					FD_CLR(0,&readfds);
 					fgets(command, sizeof (command),stdin);
@@ -671,6 +965,11 @@ int main(int argc, char * argv[]){
 						case REGISTER:
 							if(runmode==0){
 								fprintf(stderr, "Cannot 'Register' on a server\n" );break;}
+
+							if(active){
+								fprintf(stderr, "Client is already registered \n");
+								break;
+							}
 							char serverIP[INET6_ADDRSTRLEN];
 							char serverPort[10];
 							strcpy(serverIP,strtok_r(NULL," ",&tokenptr));
@@ -711,6 +1010,7 @@ int main(int argc, char * argv[]){
 								exit (31);
 							}
 							active = 1;
+							
 							break;
 						case CREATOR:
 							fprintf(stderr,"(c) 2014 Sriram Shantharam (sriramsh@buffalo.edu)\n\n");
@@ -729,6 +1029,35 @@ int main(int argc, char * argv[]){
 							fprintf(stderr, "term ID= %d\n", atoi(termID));
 
 							deregisterClient(atoi(termID));
+
+							break;
+						case HOSTNAME:
+							zprintf("Hostname resolution");
+							char i_hostname[HOST_NAME_MAX];
+							char i_resolvedIP[INET6_ADDRSTRLEN];
+							strcpy(i_hostname,strtok_r(NULL," ",&tokenptr));
+							if(DEBUG)
+								fprintf(stderr, "%s\n",i_hostname);
+							getIpFromHost(i_hostname, i_resolvedIP);
+							fprintf(stderr, "Resolved IP %s\n", i_resolvedIP);
+							break;
+
+						case CONNECT:
+							zprintf("Connecting to peer");
+							char c_ip[INET6_ADDRSTRLEN];
+							int c_port;
+							strcpy(c_ip,strtok_r(NULL," ",&tokenptr));
+							c_port = atoi(strtok_r(NULL," ",&tokenptr));
+							if(DEBUG)
+								fprintf(stderr, "Connect command: ip: %s port: %d\n",c_ip,c_port );
+							connectTo(c_ip,c_port);
+
+							break;
+						case UPLOAD:
+							break;
+						case DOWNLOAD:
+							break;
+						case STATISTICS:
 							break;
 						default:
 							fprintf(stderr,"Invalid command. For a list of supported commands, type 'help'\n");
@@ -765,14 +1094,38 @@ int main(int argc, char * argv[]){
 							registerClient();
 							break;
 						case LIST:
-							zprintf("update list");
+							zprintf("update list\n");
 							memcpy(peerlist,newMessage,sizeof peerlist);
 							listpeers();
 							break;
 						case DEREGISTER:
-							zprintf("A client deregistered");
-							removeClientFromList();
+							zprintf("A client deregistered\n");
+							int id = atoi(strtok_r(NULL,"|",&regptr));
+							removeClientFromList(id);
 							break;
+						case TERMINATE:
+							zprintf("This client was terminated!\n");
+							active=FALSE;
+							reinitializeList();
+							fprintf(stderr, "Client disconnected from server\n");
+							break;
+						case NOOP:
+							zprintf("No Op received \n");
+							FD_SET(newfd,&master);
+							if(newfd>fdmax){
+								fdmax = newfd;
+							}
+							struct sockaddr_in peeraddr;
+							int peeraddrlen = sizeof peeraddr;
+							getpeername(newfd, (struct sockaddr *)&peeraddr, &peeraddrlen);
+							char peeripstr[INET6_ADDRSTRLEN];
+							inet_ntop(peeraddr.sin_family, &(peeraddr.sin_addr), peeripstr, sizeof peeripstr);
+							addToPeerFdList(peeripstr,newfd);
+
+
+
+						default:
+							fprintf(stderr,"Invalid command received command=%s\n",newMessage);
 
 
 
