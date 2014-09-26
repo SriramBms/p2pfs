@@ -498,7 +498,7 @@ int removeFromPeerFdList(int fd){
 	if(i==MAX_PEER_ENTRIES){
 		connectedlist[MAX_PEER_ENTRIES].id = 0;
 		connectedlist[MAX_PEER_ENTRIES].fd = 0;
-
+		numPeers--;
 
 		return TRUE;
 	}
@@ -935,6 +935,7 @@ void requestDownload(int c_id, char * c_filename){
 void sendFileTo(int c_id, char * c_filename){
 						int targetID = c_id;
 						int upfd = getFdFromId(targetID);
+						//int upfd = c_fd;
 						char upfilename[HOST_NAME_MAX];
 						strcpy(upfilename, c_filename);
 						struct stat st;
@@ -1944,6 +1945,16 @@ int main(int argc, char * argv[]){
 
 								}
 								strcpy(reqfilename, tempptr);
+
+								int m;
+								for(m=0;m<MAX_PEER_ENTRIES+1;m++){
+									if(connectedlist[m].fd==i){
+										if(DEBUG)
+											fprintf(stderr, "Value of m : %d\n", m);
+										sendFileTo(m+1, reqfilename);
+										break;
+									}
+								}
 
 
 
