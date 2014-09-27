@@ -1293,7 +1293,7 @@ void printstats(){
 				}
 		}
 	}else{
-		requeststats();
+		//requeststats();
 		fprintf(stderr, "Hostname1->Hostname2->Total Upload->Avg Upload Rate(bps)->Total Downloads->Avg Download Rate(bps)\n");
 			for(j=0;j<MAX_PEER_ENTRIES+1;j++){
 				if(connstat[j].isvalid){
