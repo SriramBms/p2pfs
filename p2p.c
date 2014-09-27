@@ -47,6 +47,9 @@
 #define INCOMING 19
 #define OUTGOING 20
 #define DEBUGLEVEL 21
+#define FILEPROGRESS 22
+#define FILEEND 23
+#define PROCEED 24
 
 #define TERM "***"
 #define TRUE 1
@@ -76,8 +79,16 @@ struct connectionparams{
 	char hostname[HOST_NAME_MAX];
 	int port;
 	int fd;
+	FILE * diskfp;
+	long filesize;
+	long totalrecv;
+	long totalremaining;
 	char filename[HOST_NAME_MAX]; //assume the file name is not longer than host name length/ same constraints
 	int isactive;
+	double starttime;
+	double endtime;
+	long bits;
+
 };
 
 struct dlfile{
@@ -215,6 +226,10 @@ int getCommandType(char * token){
 		return INCOMING;
 	else if(strcmp(token, "fr")==0)
 		return OUTGOING;
+	else if(strcmp(token, "fp")==0)
+		return FILEPROGRESS;
+	else if(strcmp(token, "fe")==0)
+		return FILEEND;
 	else if(strcmp(token, "debug")==0)
 		return DEBUGLEVEL;
 	else
@@ -536,6 +551,7 @@ int removeFromPeerFdList(int fd){
 	}
 
 	connectedlist[j-1].id = 0;
+	connectedlist[j-1].fd = 0;
 	numPeers--;
 	return TRUE;
 
@@ -616,6 +632,16 @@ int getFdFromId(int i_id){  //inherently different from getIDfromFD. Not it's in
 	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].id==i_id)
 			return connectedlist[i].fd;
+	}
+	return -1;
+}
+
+int getCxnIndex(int i_fd){
+	int i = 0;
+	for(i=0;i<MAX_PEER_ENTRIES;i++){
+		if(connectedlist[i].fd == i_fd){
+			return i;
+		}
 	}
 	return -1;
 }
@@ -1037,6 +1063,10 @@ void sendFileTo(int c_id, char * c_filename){
 							if(DEBUG){
 								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
 							}
+							//***
+							//char sendbuffer[PACKET_SIZE]={0};
+							//snprintf(sendbuffer, sizeof sendbuffer, "FP|%s|", TERM);
+							//sendToFd(upfd, sendbuffer, PACKET_SIZE);
 
 
 							sendToFd(upfd, readbuffer, PACKET_SIZE);
@@ -1050,6 +1080,10 @@ void sendFileTo(int c_id, char * c_filename){
 							if(DEBUG){
 								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
 							}
+							//char sendbuffer[PACKET_SIZE]={0};
+							//snprintf(sendbuffer, sizeof sendbuffer, "FE|%s|", TERM);
+							//sendToFd(upfd, sendbuffer, PACKET_SIZE);
+
 							sendToFd(upfd, readbuffer, rem);
 						}
 
@@ -1789,6 +1823,53 @@ int main(int argc, char * argv[]){
 
 						}
 						int size_r; //not really used except for debugging
+						int cxnid = getCxnIndex(i);
+						if(connectedlist[cxnid].isactive){
+							zprintf("file transfer\n");
+							char readbuffer[PACKET_SIZE]={0};
+							size_r = recv(i, readbuffer, sizeof readbuffer, 0);
+							/*
+							if(size_r == -1){
+								connectedlist[cxnid].isactive = FALSE;
+								fclose(connectedlist[cxnid].diskfp);
+								struct timeval stoptime;
+								gettimeofday(&stoptime, NULL);
+
+								double endtimems = (stoptime.tv_sec) * 1000 + (stoptime.tv_usec) / 1000 ;
+								double uprate = (double)connectedlist[cxnid].filesize * 8/(endtimems - connectedlist[cxnid].starttime); // bits/second
+								fprintf(stderr, "Rx: %s -> %s, File size: %ld bytes, Time Taken %lf seconds, Rx Rate: %lf bits/second\n", \
+													 peerlist[getIdFromFd(i)].hostname, hostname, connectedlist[cxnid].filesize, (double)(endtimems-connectedlist[cxnid].starttime)/1000, \
+													 uprate );
+								fflush(stdout);
+								continue;
+							}
+							*/
+							connectedlist[cxnid].totalrecv += size_r;
+							connectedlist[cxnid].totalremaining -= size_r;
+							connectedlist[cxnid].bits += 8*size_r;
+							fwrite(readbuffer, 1, size_r, connectedlist[cxnid].diskfp);
+							if(connectedlist[cxnid].totalremaining==0){
+								connectedlist[cxnid].isactive = FALSE;
+								fclose(connectedlist[cxnid].diskfp);
+								struct timeval stoptime;
+								gettimeofday(&stoptime, NULL);
+
+								double endtimems = (stoptime.tv_sec) * 1000 + (stoptime.tv_usec) / 1000 ;
+								double uprate = (double)connectedlist[cxnid].filesize * 8/(endtimems - connectedlist[cxnid].starttime); // bits/second
+								fprintf(stderr, "Rx: %s -> %s, File size: %ld bytes, Time Taken %lf seconds, Rx Rate: %lf bits/second\n", \
+													 peerlist[getIdFromFd(i)].hostname, hostname, connectedlist[cxnid].filesize, (double)(endtimems-connectedlist[cxnid].starttime)/1000, \
+													 uprate );
+								fflush(stdout);
+								continue;
+
+							}
+							continue;
+
+						}
+
+						zprintf("non file transfer\n");
+
+
 						char recvMessage[1024];
 					
 						if((size_r = recv(i, recvMessage, sizeof recvMessage, 0))<=0){
@@ -1844,19 +1925,38 @@ int main(int argc, char * argv[]){
 									fprintf(stderr, "qtimes = %d rem = %d\n", qtimes, rem);
 								}
 
-								struct timeval starttime, stoptime;
+								struct timeval starttime;
 
 								gettimeofday(&starttime, NULL);
 								double starttimems = (starttime.tv_sec) * 1000 + (starttime.tv_usec) / 1000 ;
 								if(DEBUG){
 									fprintf(stderr, "Starttime %lf\n", starttimems);
 								}
-								int ii;
+								
 
 								//handle network issues
+								//TAG Experimental Solution
+								int cindex = getCxnIndex(i);
+								if(cindex==-1){
+									perror("Connection index is -1\n");
+									exit(38);
+								}
+								connectedlist[cindex].starttime = starttimems;
+								strcpy(connectedlist[cindex].filename, infilename);
+								connectedlist[cindex].diskfp = fileptr;
+								connectedlist[cindex].isactive = TRUE;
+								connectedlist[cindex].filesize = infilesize;
+								connectedlist[cindex].totalrecv = 0;
+								connectedlist[cindex].totalremaining = infilesize;
+								//connectedlist[cindex].bits+=7; //account for header
+
+								/*
+								// TAG Solution 1
 								int itotal=0;
 								int ibytesleft=infilesize;
 								int i_n;
+
+
 
 								while(itotal<infilesize){
 									char readbuffer[PACKET_SIZE]={0};
@@ -1869,9 +1969,12 @@ int main(int argc, char * argv[]){
 									}
 									fwrite(readbuffer, 1, i_n, fileptr);
 								}
+								*/
 
 								
-								/*
+								/* 
+								// TAG Solution 2
+								int ii;
 								int itotal;
 								int ibytesleft;
 								int i_n;
@@ -1921,7 +2024,8 @@ int main(int argc, char * argv[]){
 								}
 								*/
 
-
+								//TAG logging and otehr stuff
+								/*
 
 								gettimeofday(&stoptime, NULL);
 
@@ -1939,6 +2043,7 @@ int main(int argc, char * argv[]){
 								fclose(fileptr);
 
 								fprintf(stderr, "A new file was downloaded to the local machine\n");
+								*/
 								break;
 
 							case OUTGOING:
@@ -1964,6 +2069,9 @@ int main(int argc, char * argv[]){
 
 
 
+							break;
+
+							case PROCEED:
 							break;
 
 							default:
