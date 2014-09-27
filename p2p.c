@@ -50,6 +50,7 @@
 #define FILEPROGRESS 22
 #define FILEEND 23
 #define PROCEED 24
+#define LOGSTAT 25
 
 #define TERM "***"
 #define TRUE 1
@@ -132,8 +133,11 @@ char port[5];
 char * tokenptr,*regptr,*connectptr,*termptr,*dlptr,*recvptr;
 int active;
 //int activeConn[4]={-1};
-int numPeers;
+int numPeers=0;
 int yes = 1;
+
+int upflag=0;
+int downflag=0;
 
 //function declarations;
 void listpeers();
@@ -232,6 +236,10 @@ int getCommandType(char * token){
 		return FILEEND;
 	else if(strcmp(token, "debug")==0)
 		return DEBUGLEVEL;
+	else if(strcmp(token, "pl")==0)
+		return LOGSTAT;
+	else if(strcmp(token, "logstat")==0)
+		return LOGSTAT;
 	else
 		return INVALID;
 }
@@ -1095,13 +1103,14 @@ void sendFileTo(int c_id, char * c_filename){
 						if(DEBUG){
 							fprintf(stderr, "endtime  %lf\n", endtimems);
 						}
+						int cxnindex = getCxnIndex(upfd);
 						double uprate = (double)upsize * 8* 1000/(endtimems - starttimems); // bits/second
 						fprintf(stderr, "Tx: %s -> %s, File size: %ld bytes, Time Taken %lf seconds, Tx Rate: %lf bits/second\n", \
-											 hostname, peerlist[targetID].hostname, upsize, (double)(endtimems-starttimems)/1000, \
+											 hostname, connectedlist[cxnindex].hostname, upsize, (double)(endtimems-starttimems)/1000, \
 											 uprate );
 						fflush(stdout);
 
-						logupload(peerlist[targetID].hostname, upsize*8, (endtimems-starttimems)/1000);
+						logupload(connectedlist[cxnindex].hostname, upsize*8, (endtimems-starttimems)/1000);
 
 						fclose(fileptr);
 
@@ -1128,7 +1137,7 @@ void listpeers(){
 	}
 	int i=0;
 	
-
+	fprintf(stderr, "Server List Updated\n");
 	while(peerlist[i].id!=0 && i <MAX_LIST_ENTRIES){
 
 		printf("%5d%35s%20s%8d\n", peerlist[i].id, peerlist[i].hostname, peerlist[i].ip, peerlist[i].port);
@@ -1172,6 +1181,11 @@ int getfreelogindex(){
 
 
 void logupload(char * i_hostname, long i_ubits, double i_utime){
+	if(upflag==0){
+		zprintf(" This client did not initiate the upload. No logging required \n");
+		return;
+	}
+	upflag--;
 	int p = islogged(i_hostname);
 	if(p==-1){
 		if(DEBUG)
@@ -1204,10 +1218,16 @@ void logupload(char * i_hostname, long i_ubits, double i_utime){
 			}
 		}
 	}
+	
 
 }
 
 void logdownload(char * i_hostname, long i_dbits, double i_dtime){
+	if(downflag==0){
+		zprintf("This machine did not initiate the download. No logging required \n");
+		return;
+	}
+	downflag--;
 	int p = islogged(i_hostname);
 	if(p==-1){
 		if(DEBUG)
@@ -1240,11 +1260,58 @@ void logdownload(char * i_hostname, long i_dbits, double i_dtime){
 			}
 		}
 	}
+
+	
 }
 
+void printlogstat(){
+	int j=0;
+		for(j=0;j<MAX_PEER_ENTRIES+1;j++){
+			if(connstat[j].isvalid){
+				fprintf(stderr, "Hostname %s, ups: %d downs: %d ubits: %ld, dbits: %ld, utime: %lf, dtime: %lf \n", \
+								connstat[j].hostname, \
+								connstat[j].stats.ul, connstat[j].stats.dl, \
+								connstat[j].stats.ubits,connstat[j].stats.dbits,\
+								connstat[j].stats.utime, connstat[j].stats.dtime);
+			}
+	}
+}
 
+void printstats(){
+	int j=0;
+	
+	if(runmode==1){
+			fprintf(stderr, "Hostname->Total Upload->Avg Upload Rate(bps)->Total Downloads->Avg Download Rate(bps)\n");
+			for(j=0;j<MAX_PEER_ENTRIES+1;j++){
+				if(connstat[j].isvalid){
+					fprintf(stderr, "%s->%d->%ld->%d->%ld\n", \
+									connstat[j].hostname, \
+									connstat[j].stats.ul, \
+									(long)(connstat[j].stats.utime==0?0:(connstat[j].stats.ubits/connstat[j].stats.utime)),\
+									connstat[j].stats.dl,\
+									(long)(connstat[j].stats.dtime==0?0:(connstat[j].stats.dbits/connstat[j].stats.dtime)));
+				}
+		}
+	}else{
+		requeststats();
+		fprintf(stderr, "Hostname1->Hostname2->Total Upload->Avg Upload Rate(bps)->Total Downloads->Avg Download Rate(bps)\n");
+			for(j=0;j<MAX_PEER_ENTRIES+1;j++){
+				if(connstat[j].isvalid){
+					fprintf(stderr, "%s->%s->%d->%ld->%d->%ld\n", \
+									connstat[j].hostname, \
+									connstat[j].hostname2, \
+									connstat[j].stats.ul, \
+									(long)(connstat[j].stats.utime==0?0:(connstat[j].stats.ubits/connstat[j].stats.utime)),\
+									connstat[j].stats.dl,\
+									(long)(connstat[j].stats.dtime==0?0:(connstat[j].stats.dbits/connstat[j].stats.dtime)));
+				}
+		}
+	}
+}
 
+void requeststats(){
 
+}
 
 
 
@@ -1606,6 +1673,10 @@ int main(int argc, char * argv[]){
 						break;
 
 					case CONNECT:
+						if(runmode==0){
+							fprintf(stderr, "Cannot connect on Server\n");
+							break;
+						}
 						zprintf("Connecting to peer");
 						char c_ip[INET6_ADDRSTRLEN];
 						int c_port;
@@ -1640,9 +1711,9 @@ int main(int argc, char * argv[]){
 										
 						char upfilename[HOST_NAME_MAX];
 						strcpy(upfilename, strtok_r(NULL, " ", &tokenptr));
-
+						upflag++;
 						sendFileTo(targetID, upfilename);
-
+						
 						//TAG start of function call
 						
 						//TAG end of potential function call
@@ -1687,14 +1758,16 @@ int main(int argc, char * argv[]){
 								fprintf(stderr, "Conn ID: %d File name: %s\n", filelist[jj].cid, filelist[jj].filename);
 							}
 						}
-
+						
 						for(k=0;k<numArgs;k++){
+							downflag++;
 							requestDownload(filelist[k].cid, filelist[k].filename);
 						}
 
 
 						break;
 					case STATISTICS:
+						printstats();
 						break;
 					case LISTON:
 						listpeers();
@@ -1702,6 +1775,10 @@ int main(int argc, char * argv[]){
 
 					case DEBUGLEVEL:
 						toggleDebugLevel();
+						break;
+
+					case LOGSTAT:
+						printlogstat();
 						break;
 
 					default:
@@ -1864,7 +1941,7 @@ int main(int argc, char * argv[]){
 													 uprate );
 								fflush(stdout);
 
-								logdownload(connectedlist[cxnid].hostname,  connectedlist[cxnid].filesize * 8, endtimems/1000);
+								logdownload(connectedlist[cxnid].hostname,  connectedlist[cxnid].filesize * 8, (double)(endtimems-connectedlist[cxnid].starttime)/1000);
 								continue;
 
 							}
@@ -2077,6 +2154,10 @@ int main(int argc, char * argv[]){
 							break;
 
 							case PROCEED:
+							break;
+
+							case LOGSTAT:
+								zprintf("Server requested log data\n");
 							break;
 
 							default:
