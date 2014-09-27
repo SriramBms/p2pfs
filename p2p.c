@@ -1854,7 +1854,24 @@ int main(int argc, char * argv[]){
 								int ii;
 
 								//handle network issues
+								int itotal=0;
+								int ibytesleft=infilesize;
+								int i_n;
+
+								while(itotal<infilesize){
+									char readbuffer[PACKET_SIZE]={0};
+									i_n = recv(i, readbuffer, PACKET_SIZE, 0);
+									if(i_n == -1){break;}
+									itotal += i_n;
+									ibytesleft -= i_n;
+									if(DEBUG){
+										if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", i_n, readbuffer);
+									}
+									fwrite(readbuffer, 1, i_n, fileptr);
+								}
+
 								
+								/*
 								int itotal;
 								int ibytesleft;
 								int i_n;
@@ -1902,6 +1919,9 @@ int main(int argc, char * argv[]){
 
 									
 								}
+								*/
+
+
 
 								gettimeofday(&stoptime, NULL);
 
