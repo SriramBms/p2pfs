@@ -983,7 +983,9 @@ void requestDownload(int c_id, char * c_filename){
 void sendFileTo(int c_id, char * c_filename){
 						int targetID = c_id;
 						int upfd = getFdFromId(targetID);
-						//int upfd = c_fd;
+						//int upfd = connectedlist[targetID].fd;
+
+						
 						char upfilename[HOST_NAME_MAX];
 						strcpy(upfilename, c_filename);
 						struct stat st;
@@ -1099,7 +1101,7 @@ void sendFileTo(int c_id, char * c_filename){
 											 uprate );
 						fflush(stdout);
 
-						logupload(peerlist[targetID].hostname, upsize*8, (endtimems-starttimems));
+						logupload(peerlist[targetID].hostname, upsize*8, (endtimems-starttimems)/1000);
 
 						fclose(fileptr);
 
@@ -1256,6 +1258,7 @@ void init(){
 		perror("Error while retrieving hostname");
 		exit(23);
 	}
+	fprintf(stderr, "Machine name: %s\n", hostname);
 	if(runmode==0){
 		addToList(hostname,localIP,port);
 	}
@@ -1458,7 +1461,7 @@ int main(int argc, char * argv[]){
 			perror("SELECT failed");
 			exit(6);
 		}
-		fprintf(stderr,"\n >>> \n");
+		//fprintf(stderr,"\n >>> \n");
 
 		for(i=0;i<=fdmax;i++){
 			//fprintf(stderr, "checking fd %d\n",i);
@@ -1855,11 +1858,13 @@ int main(int argc, char * argv[]){
 								gettimeofday(&stoptime, NULL);
 
 								double endtimems = (stoptime.tv_sec) * 1000 + (stoptime.tv_usec) / 1000 ;
-								double uprate = (double)connectedlist[cxnid].filesize * 8/(endtimems - connectedlist[cxnid].starttime); // bits/second
+								double uprate = (double)connectedlist[cxnid].filesize * 8 *1000/(endtimems - connectedlist[cxnid].starttime); // bits/second
 								fprintf(stderr, "Rx: %s -> %s, File size: %ld bytes, Time Taken %lf seconds, Rx Rate: %lf bits/second\n", \
-													 peerlist[getIdFromFd(i)].hostname, hostname, connectedlist[cxnid].filesize, (double)(endtimems-connectedlist[cxnid].starttime)/1000, \
+													 connectedlist[cxnid].hostname, hostname, connectedlist[cxnid].filesize, (double)(endtimems-connectedlist[cxnid].starttime)/1000, \
 													 uprate );
 								fflush(stdout);
+
+								logdownload(connectedlist[cxnid].hostname,  connectedlist[cxnid].filesize * 8, endtimems/1000);
 								continue;
 
 							}
