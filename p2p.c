@@ -55,12 +55,12 @@
 #define HOST_NAME_MAX 128
 #define MAX_LIST_ENTRIES 5
 #define MAX_PEER_ENTRIES 3
-#define PACKET_SIZE 512
+#define PACKET_SIZE 1400
 #define VERBOSE FALSE
 
 
 char * noop = "Z|***|";
-int debug=FALSE;
+int debug=TRUE;
 struct networkentity{
 	char token[6];
 	int id;
@@ -84,11 +84,32 @@ struct dlfile{
 	int cid;
 	char filename[HOST_NAME_MAX];
 };
+
+struct statistic{
+	int ul;
+	int dl;
+	long ubits;
+	long dbits;
+	double utime;
+	double dtime;
+};
+
+struct hoststat{
+	int isvalid;
+	char hostname[HOST_NAME_MAX];
+	int port;
+	char hostname2[HOST_NAME_MAX];
+	struct statistic stats;
+};
+
+
 //globals
 struct networkentity peerlist[MAX_LIST_ENTRIES]={0};
 //struct networkentity connectedpeers[MAX_PEER_ENTRIES+1]={0};
 struct connectionparams connectedlist[MAX_PEER_ENTRIES+1]={0};
 //struct connectionparams waitlist[MAX_PEER_ENTRIES]={0};
+
+struct hoststat connstat[4]={0}; //STATS VARIABLE
 
 fd_set master, readfds;
 int runmode; //0 for server, 1 for client
@@ -119,7 +140,8 @@ int addToPeerFdList(char * , int, char *, int);
 int removeFromPeerFdList(int);
 int isConnectedToIp(char * , int);
 int isClientOnline(char *, int);
-
+void logupload(char * , long , double);
+void logdownload(char * , long , double);
 
 
 //---------------------------------//
@@ -1041,6 +1063,8 @@ void sendFileTo(int c_id, char * c_filename){
 											 uprate );
 						fflush(stdout);
 
+						logupload(peerlist[targetID].hostname, upsize*8, (endtimems-starttimems));
+
 						fclose(fileptr);
 
 						fprintf(stderr, "File upload complete\n");
@@ -1074,6 +1098,117 @@ void listpeers(){
 	}
 }
 
+// stat related fuctions 
+
+//Returns if this entity's upload-download activity is logged and returns the index
+int islogged(char * hostname){
+	int i;
+	int max_hosts;
+	if(runmode==0)
+		max_hosts=4;
+	else
+		max_hosts=3;
+
+	for(i=0;i<max_hosts;i++){
+		if(strcmp(connstat[i].hostname, hostname)==0)
+			return i;
+	}
+	return -1;
+}
+
+int getfreelogindex(){
+	int i;
+	int max_hosts;
+	if(runmode==0)
+		max_hosts=4;
+	else
+		max_hosts=3;
+
+	for(i=0;i<max_hosts;i++){
+		if(connstat[i].isvalid==FALSE)
+			return i;
+	}
+	return -1;
+}
+
+
+
+void logupload(char * i_hostname, long i_ubits, double i_utime){
+	int p = islogged(i_hostname);
+	if(p==-1){
+		if(DEBUG)
+			fprintf(stderr, "Given hostname %s is not logged\n", i_hostname);
+
+		p = getfreelogindex();
+		strcpy(connstat[p].hostname, i_hostname);
+		if(p==-1){
+			zprintf("Error: Log index returned -1.\n");
+			fprintf(stderr, "Warning: something went wrong while logging\n");
+			return;
+		}
+		
+	}
+
+	connstat[p].isvalid=TRUE;
+	connstat[p].stats.ul++;
+	connstat[p].stats.ubits+=i_ubits;
+	connstat[p].stats.utime+=i_utime;
+
+	if(DEBUG){
+		int j=0;
+		for(j=0;j<MAX_PEER_ENTRIES+1;j++){
+			if(connstat[j].isvalid){
+				fprintf(stderr, "Hostname %s, ups: %d downs: %d ubits: %ld, dbits: %ld, utime: %lf, dtime: %lf \n", \
+								connstat[j].hostname, \
+								connstat[j].stats.ul, connstat[j].stats.dl, \
+								connstat[j].stats.ubits,connstat[j].stats.dbits,\
+								connstat[j].stats.utime, connstat[j].stats.dtime);
+			}
+		}
+	}
+
+}
+
+void logdownload(char * i_hostname, long i_dbits, double i_dtime){
+	int p = islogged(i_hostname);
+	if(p==-1){
+		if(DEBUG)
+			fprintf(stderr, "Given hostname %s is not logged\n", i_hostname);
+
+		p = getfreelogindex();
+		strcpy(connstat[p].hostname, i_hostname);
+		if(p==-1){
+			zprintf("Error: Log index returned zero.\n");
+			fprintf(stderr, "Warning: something went wrong while logging\n");
+			return;
+		}
+		
+	}
+
+	connstat[p].isvalid=TRUE;
+	connstat[p].stats.dl++;
+	connstat[p].stats.dbits+=i_dbits;
+	connstat[p].stats.dtime+=i_dtime;
+
+	if(DEBUG){
+		int j=0;
+		for(j=0;j<MAX_PEER_ENTRIES+1;j++){
+			if(connstat[j].isvalid){
+				fprintf(stderr, "Hostname %s, ups: %d downs: %d ubits: %ld, dbits: %ld, utime: %lf, dtime: %lf \n", \
+								connstat[j].hostname, \
+								connstat[j].stats.ul, connstat[j].stats.dl, \
+								connstat[j].stats.ubits,connstat[j].stats.dbits,\
+								connstat[j].stats.utime, connstat[j].stats.dtime);
+			}
+		}
+	}
+}
+
+
+
+
+
+
 
 
 void init(){
@@ -1089,7 +1224,6 @@ void init(){
 		addToList(hostname,localIP,port);
 	}
 	active = 0;
-
 
 }
 
@@ -1464,123 +1598,14 @@ int main(int argc, char * argv[]){
 						if(isValidFd(getFdFromId(targetID))==-1){
 							fprintf(stderr, "Entered ID does not represent a valid active connection\n");
 						}
-						//int upfd = getFdFromId(targetID);
-						
+										
 						char upfilename[HOST_NAME_MAX];
 						strcpy(upfilename, strtok_r(NULL, " ", &tokenptr));
 
 						sendFileTo(targetID, upfilename);
+
 						//TAG start of function call
-						/*
-						struct stat st;
-						int retcode = stat(upfilename, &st);
-						if (retcode!=0){
-							fprintf(stderr, "Invalid file name/ File does not exist\n");
-							break;
-						}
 						
-
-						long upsize = (long)st.st_size;
-						char upmsg[100];
-						char upfilename_stripped[HOST_NAME_MAX];
-
-						strcpy(upfilename_stripped, upfilename);
-
-						reverse_r(*upfilename_stripped, upfilename_stripped, upfilename_stripped+1);
-						if(DEBUG)
-							fprintf(stderr, "Reversed file string: %s\n", upfilename);
-
-						
-
-						strcpy(upfilename_stripped, strtok_r(upfilename_stripped,"/", &dlptr));
-
-						reverse_r(*upfilename_stripped, upfilename_stripped, upfilename_stripped+1);
-						//reverse_r(*upfilename, upfilename, upfilename+1);
-						snprintf(upmsg, sizeof upmsg, "FU|%s|%ld|%s|",upfilename_stripped,upsize,TERM);
-
-
-						if(DEBUG){
-							fprintf(stderr, "Upload command: id %d filename %s\n", targetID, upfilename);
-							fprintf(stderr, "File size: %d\n", (int) st.st_size);
-							fprintf(stderr, "Command to send %s\n", upmsg);
-							fprintf(stderr, "Original name: %s Stripped filename: %s length: %d\n",upfilename, upfilename_stripped, (int)strlen(upfilename_stripped));
-
-						}
-
-						
-
-						FILE * fileptr;
-
-						fileptr = fopen(upfilename, "r");
-						if(fileptr==NULL){
-							fprintf(stderr, "Error while reading the file. Please make sure the path is correct\n");
-							break;
-						}
-
-						int qtimes = (int)upsize/PACKET_SIZE;
-						int rem = (int)upsize - qtimes * PACKET_SIZE;
-
-						if(DEBUG){
-							fprintf(stderr, "qtimes = %d rem = %d \n", qtimes, rem);
-						}
-
-						//file ops
-
-						fprintf(stderr, "Upload in progress. Please wait...\n");
-						//FD_CLR(STDIN, &master); //disable inputs until uploads complete
-
-
-						//Send prepare message to receiver
-						sendToFd(upfd, upmsg, sizeof upmsg);
-						//sleep(1); //wait for acceptor to prepare
-
-						int ii;
-						struct timeval starttime, stoptime;
-
-						gettimeofday(&starttime, NULL);
-						double starttimems = (starttime.tv_sec) * 1000 + (starttime.tv_usec) / 1000 ;
-						if(DEBUG){
-							fprintf(stderr, "Starttime %lf\n", starttimems);
-						}
-
-						for(ii=0;ii < qtimes; ii++){
-							char readbuffer[PACKET_SIZE]={0};
-							int bytesread = fread(readbuffer, 1, PACKET_SIZE, fileptr);
-							if(DEBUG){
-								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
-							}
-							sendToFd(upfd, readbuffer, PACKET_SIZE);
-
-
-						}
-
-						if(rem!=0){
-							char readbuffer[PACKET_SIZE]={0};
-							int bytesread = fread(readbuffer, 1, PACKET_SIZE, fileptr);
-							if(DEBUG){
-								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
-							}
-							sendToFd(upfd, readbuffer, rem);
-						}
-
-						gettimeofday(&stoptime, NULL);
-
-						double endtimems = (stoptime.tv_sec) * 1000 + (stoptime.tv_usec) / 1000 ;
-						if(DEBUG){
-							fprintf(stderr, "endtime  %lf\n", endtimems);
-						}
-						double uprate = (double)upsize * 8* 1000/(endtimems - starttimems); // bits/second
-						fprintf(stderr, "Tx: %s -> %s, File size: %ld bytes, Time Taken %lf seconds, Tx Rate: %lf bits/second\n", \
-											 hostname, peerlist[targetID].hostname, upsize, (double)(endtimems-starttimems)/1000, \
-											 uprate );
-						fflush(stdout);
-
-						fclose(fileptr);
-
-						fprintf(stderr, "File upload complete\n");
-
-
-						*/
 						//TAG end of potential function call
 
 
@@ -1607,62 +1632,6 @@ int main(int argc, char * argv[]){
 						}
 						
 						
-						/*
-						//read the first set of args- simple hack because loops was creating segmentation fault
-						if(strcpy(temptoken, strtok_r(NULL, " ", &tokenptr))==NULL)
-							goto readargs;
-
-						filelist[0].cid = atoi(temptoken);
-
-						if(DEBUG)
-						 	fprintf(stderr, "cid [0] : %d\n", filelist[0].cid);
-
-						strcpy(filelist[0].filename, strtok_r(NULL, " ", &tokenptr));
-
-						numArgs++;
-
-
-						
-						
-						//read the 2nd set of args
-						if((tempptr = strtok_r(NULL, " ", &tokenptr))==NULL)
-							goto readargs;
-
-						filelist[1].cid = atoi(strcpy(temptoken, tempptr));
-
-						if(DEBUG)
-						 	fprintf(stderr, "cid [1] : %d\n", filelist[1].cid);
-
-						strcpy(filelist[1].filename, strtok_r(NULL, " ", &tokenptr));
-
-						numArgs++;
-
-
-						
-
-						//read the 3rd set of args
-						if(strtok_r(NULL, " ", &tokenptr)==NULL)
-							goto readargs;
-
-						filelist[2].cid = atoi(temptoken);
-
-						if(DEBUG)
-						 	fprintf(stderr, "cid [2] : %d\n", filelist[2].cid);
-
-						strcpy(filelist[2].filename, strtok_r(NULL, " ", &tokenptr));
-
-						numArgs++;
-
-
-						
-
-						//end read args
-						
-						
-						readargs:
-						*/
-
-
 						if(numArgs==0){
 							fprintf(stderr, "No arguments entered. \n");
 							break;
@@ -1671,15 +1640,7 @@ int main(int argc, char * argv[]){
 						if(DEBUG){
 							fprintf(stderr, "no of args %d\n", numArgs);
 						}
-						/*
-						for(jj=0;jj<numArgs;jj++){
-							zprintf("Assigning cid \n");
-
-							filelist[jj].cid = atoi(strtok_r(NULL, " ", &tokenptr));
-							zprintf("Assigning filename \n");
-							strcpy(filelist[jj].filename, strtok_r(NULL, " ", &tokenptr));
-						}
-						*/
+						
 						zprintf("Done assigning arguments \n");
 						if(DEBUG){
 							
@@ -1691,12 +1652,6 @@ int main(int argc, char * argv[]){
 						for(k=0;k<numArgs;k++){
 							requestDownload(filelist[k].cid, filelist[k].filename);
 						}
-
-
-
-
-
-
 
 
 						break;
@@ -1931,6 +1886,7 @@ int main(int argc, char * argv[]){
 													 uprate );
 								fflush(stdout);
 
+								logdownload(peerlist[getIdFromFd(i)].hostname, infilesize*8, (endtimems - starttimems));
 								fclose(fileptr);
 
 								fprintf(stderr, "A new file was downloaded to the local machine\n");
