@@ -55,7 +55,7 @@
 #define HOST_NAME_MAX 128
 #define MAX_LIST_ENTRIES 5
 #define MAX_PEER_ENTRIES 3
-#define PACKET_SIZE 1400
+#define PACKET_SIZE 512
 #define VERBOSE FALSE
 
 
@@ -1037,6 +1037,8 @@ void sendFileTo(int c_id, char * c_filename){
 							if(DEBUG){
 								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
 							}
+
+							
 							sendToFd(upfd, readbuffer, PACKET_SIZE);
 
 
