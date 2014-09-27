@@ -1852,26 +1852,53 @@ int main(int argc, char * argv[]){
 									fprintf(stderr, "Starttime %lf\n", starttimems);
 								}
 								int ii;
+
+								//handle network issues
+								
+								int itotal;
+								int ibytesleft;
+								int i_n;
+
+
 								for(ii=0;ii < qtimes; ii++){
+									itotal = 0;
+									ibytesleft = PACKET_SIZE;
+									
 									char readbuffer[PACKET_SIZE]={0};
-									int bytesread = recv(i, readbuffer, PACKET_SIZE, 0);
-									if(DEBUG){
-										if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
+									while(itotal < PACKET_SIZE){
+										i_n = recv(i, readbuffer, PACKET_SIZE, 0);
+										if(i_n == -1){break;}
+										itotal += i_n;
+										ibytesleft -= i_n;
+										if(DEBUG){
+											if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", i_n, readbuffer);
+										}
+										fwrite(readbuffer, 1, i_n, fileptr);
 									}
-									fwrite(readbuffer, 1, bytesread, fileptr);
+									
+									
 									
 
 
 								}
 
+								ibytesleft = rem;
+								itotal = 0;
+
 								if(rem!=0){
 									char readbuffer[PACKET_SIZE]={0};
-									int bytesread = recv(i, readbuffer, PACKET_SIZE, 0);
-									if(DEBUG){
-										if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
-									}
+									while(itotal < rem){
+										i_n = recv(i, readbuffer, PACKET_SIZE, 0);
+										if(i_n == -1){break;}
+										itotal += i_n;
+										ibytesleft -= i_n;
+										if(DEBUG){
+											if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", i_n, readbuffer);
+										}
 
-									fwrite(readbuffer, 1, bytesread, fileptr);
+										fwrite(readbuffer, 1, i_n, fileptr);
+									}
+									
 
 									
 								}
