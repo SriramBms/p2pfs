@@ -1038,7 +1038,7 @@ void sendFileTo(int c_id, char * c_filename){
 								if (VERBOSE) fprintf(stderr, "Bytes read %d Buffer contents: %s \n", bytesread, readbuffer);
 							}
 
-							
+
 							sendToFd(upfd, readbuffer, PACKET_SIZE);
 
 
@@ -1810,8 +1810,8 @@ int main(int argc, char * argv[]){
 						}
 
 						
-
-						fprintf(stderr, "Received message through existing connection: %s\n", recvMessage);
+						if(VERBOSE)
+							fprintf(stderr, "Received message through existing connection: %s\n", recvMessage);
 
 
 
