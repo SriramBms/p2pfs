@@ -51,7 +51,6 @@
 #define FILEEND 23
 #define PROCEED 24
 #define LOGSTAT 25
-#define PSIZE 26
 
 #define TERM "***"
 #define TRUE 1
@@ -60,13 +59,12 @@
 #define HOST_NAME_MAX 128
 #define MAX_LIST_ENTRIES 5
 #define MAX_PEER_ENTRIES 3
-#define PACKET_SIZE 512
+#define PACKET_SIZE 1000
 #define VERBOSE FALSE
 
 
 char * noop = "Z|***|";
-int debug=TRUE;
-int psize=100;
+int debug=FALSE;
 struct networkentity{
 	char token[6];
 	int id;
@@ -242,8 +240,6 @@ int getCommandType(char * token){
 		return LOGSTAT;
 	else if(strcmp(token, "logstat")==0)
 		return LOGSTAT;
-	else if(strcmp(token, "psize")==0)
-		return PSIZE;
 	else
 		return INVALID;
 }
@@ -486,13 +482,13 @@ void terminateClient(int connID){
 
 int addToPeerFdList(char * i_ip, int i_port, char * hostname, int i_fd){
 	int i;
-	if(numPeers==MAX_PEER_ENTRIES)
+	if(numPeers==MAX_PEER_ENTRIES+1)
 		return FALSE;
 
 	if(isConnectedToIp(i_ip, i_port))
 		return TRUE;
 
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].fd==0){
 			strcpy(connectedlist[i].ip,i_ip);
 			connectedlist[i].id=i+1;
@@ -544,9 +540,9 @@ int removeFromPeerFdList(int fd){
 
 
 
-	if(i==MAX_PEER_ENTRIES){
-		connectedlist[MAX_PEER_ENTRIES].id = 0;
-		connectedlist[MAX_PEER_ENTRIES].fd = 0;
+	if(i==MAX_PEER_ENTRIES+1){
+		connectedlist[MAX_PEER_ENTRIES+1].id = 0;
+		connectedlist[MAX_PEER_ENTRIES+1].fd = 0;
 		numPeers--;
 
 		return TRUE;
@@ -577,7 +573,7 @@ int isConnectedToIp(char * i_ip,  int i_port){
 	int i;
 	if(numPeers==0)
 		return FALSE;
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if((strcmp(i_ip,connectedlist[i].ip)+(i_port-connectedlist[i].port))==0){
 			return TRUE;
 		}
@@ -587,7 +583,7 @@ int isConnectedToIp(char * i_ip,  int i_port){
 
 void closeAllFds(){
 	int i;
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].fd!=0){
 			close(connectedlist[i].fd);
 			connectedlist[i].fd=0;
@@ -600,9 +596,9 @@ void closeAllFds(){
 
 int addToWaitList(char * i_ip, int i_fd){
 	int i;
-	if(numPeers==MAX_PEER_ENTRIES)
+	if(numPeers==MAX_PEER_ENTRIES+1)
 		return FALSE;
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].fd==0){
 			strcpy(connectedlist[i].ip,i_ip);
 			connectedlist[i].fd=i_fd;
@@ -618,7 +614,7 @@ int removeFromWaitList(int fd){
 	int i;
 	if(numPeers==0)
 		return TRUE;
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].fd==fd){
 			connectedlist[i].fd=0;
 
@@ -631,7 +627,7 @@ int removeFromWaitList(int fd){
 int isWaiting(int fd){
 	int i;
 
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(fd == connectedlist[i].fd){
 			return TRUE;
 		}
@@ -650,7 +646,7 @@ int getFdFromId(int i_id){  //inherently different from getIDfromFD. Not it's in
 
 int getCxnIndex(int i_fd){
 	int i = 0;
-	for(i=0;i<MAX_PEER_ENTRIES;i++){
+	for(i=0;i<MAX_PEER_ENTRIES+1;i++){
 		if(connectedlist[i].fd == i_fd){
 			return i;
 		}
@@ -684,7 +680,7 @@ int connectTo(char * c_ip, int c_port){
 	char decodedIp[INET6_ADDRSTRLEN];
 	int i;
 
-	if(numPeers==MAX_PEER_ENTRIES){
+	if(numPeers==MAX_PEER_ENTRIES+1){
 		fprintf(stderr, "Maximum of connected peers reached! \n");
 		return FALSE;
 	}
@@ -1339,7 +1335,7 @@ void init(){
 
 int main(int argc, char * argv[]){
 
-	char command[100]={0};
+	char command[200]={0};
 	char tokencommand[10]={0};
 
 
@@ -1783,12 +1779,6 @@ int main(int argc, char * argv[]){
 
 					case LOGSTAT:
 						printlogstat();
-						break;
-
-					case PSIZE:
-						psize = atoi(strtok_r(NULL, " ", &tokenptr));
-						if(DEBUG)
-							fprintf(stderr, "psize = %d\n", psize);
 						break;
 
 					default:
