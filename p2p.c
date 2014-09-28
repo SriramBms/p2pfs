@@ -51,6 +51,7 @@
 #define FILEEND 23
 #define PROCEED 24
 #define LOGSTAT 25
+#define PSIZE 26
 
 #define TERM "***"
 #define TRUE 1
@@ -65,6 +66,7 @@
 
 char * noop = "Z|***|";
 int debug=TRUE;
+int psize=100;
 struct networkentity{
 	char token[6];
 	int id;
@@ -240,6 +242,8 @@ int getCommandType(char * token){
 		return LOGSTAT;
 	else if(strcmp(token, "logstat")==0)
 		return LOGSTAT;
+	else if(strcmp(token, "psize")==0)
+		return PSIZE;
 	else
 		return INVALID;
 }
@@ -932,7 +936,7 @@ void sendlistbroadcast(){
 	int myaddrlen;
 	char regMsg[512];
 	char temp[10];
-	for (i =0;i<4 && peerlist[i].id!=0;i++){
+	for (i =0;i<MAX_LIST_ENTRIES && peerlist[i].id!=0;i++){
 		if(DEBUG){
 			fprintf(stderr,"Connecting to: %s %d\n",peerlist[i].hostname,peerlist[i].port);
 		}
@@ -1779,6 +1783,12 @@ int main(int argc, char * argv[]){
 
 					case LOGSTAT:
 						printlogstat();
+						break;
+
+					case PSIZE:
+						psize = atoi(strtok_r(NULL, " ", &tokenptr));
+						if(DEBUG)
+							fprintf(stderr, "psize = %d\n", psize);
 						break;
 
 					default:
