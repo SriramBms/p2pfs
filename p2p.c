@@ -1227,7 +1227,7 @@ void logdownload(char * i_hostname, long i_dbits, double i_dtime){
 		zprintf("This machine did not initiate the download. No logging required \n");
 		return;
 	}
-	
+	downflag--;
 	int p = islogged(i_hostname);
 	if(p==-1){
 		if(DEBUG)
@@ -1942,7 +1942,7 @@ int main(int argc, char * argv[]){
 								fflush(stdout);
 
 								logdownload(connectedlist[cxnid].hostname,  connectedlist[cxnid].filesize * 8, (double)(endtimems-connectedlist[cxnid].starttime)/1000);
-								downflag--;
+								
 								continue;
 
 							}
